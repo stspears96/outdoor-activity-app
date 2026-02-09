@@ -10,7 +10,7 @@ import type {
 } from "@/lib/types";
 import { GeoButton } from "@/components/GeoButton";
 import { ActivityCard } from "@/components/ActivityCard";
-import { MapViewDynamic } from "@/components/MapViewDynamic";
+import MapViewDynamic from "@/components/MapViewDynamic";
 
 export default function Page() {
   const [lat, setLat] = useState<number | null>(null);
@@ -23,7 +23,7 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
 
   // Map mode: either show generic places (parks/cafes/etc.) or hiking markers
-  const [mode, setMode] = useState<"places" | "trails">("places");
+  const [mode, setMode] = useState<"places" | "trails" | "surf">("places");
 
   // ----- Places (OSM Overpass /api/places) -----
   const [selectedPlaceType, setSelectedPlaceType] = useState<PlaceType>("park");
@@ -43,6 +43,11 @@ export default function Page() {
   const [selectedTrailLabel, setSelectedTrailLabel] = useState<string | null>(null);
   const [selectedTrailBusy, setSelectedTrailBusy] = useState(false);
   const [selectedTrailError, setSelectedTrailError] = useState<string | null>(null);
+  
+  // ---- Surf spots ----
+  const [surfSpots, setSurfSpots] = useState<any[]>([]);
+  const [surfBusy, setSurfBusy] = useState(false);
+  const [surfError, setSurfError] = useState<string | null>(null);
 
   const canFetch = useMemo(
     () => typeof lat === "number" && typeof lon === "number",
@@ -61,8 +66,8 @@ export default function Page() {
         return "trail";
       case "cafe":
         return "cafe";
-      case "dogpark":
-        return "dogpark";
+      case "surf":
+        return "surf";
       case "walk":
       default:
         return "park";
@@ -115,9 +120,32 @@ export default function Page() {
         setPlacesBusy(false);
       }
     }
-
     fetchPlaces();
   }, [canFetch, lat, lon, mode, selectedPlaceType]);
+
+  useEffect(() => {
+    async function fetchSurf() {
+      if (!canFetch || mode !== "surf") return;
+
+      setSurfBusy(true);
+      setSurfError(null);
+
+      try {
+        const res = await fetch(`/api/surf?lat=${lat}&lon=${lon}&radiusKm=60`);
+        if (!res.ok) throw new Error(`Surf request failed: ${res.status}`);
+        const json = await res.json();
+        setSurfSpots(json.spots ?? []);
+      } catch (e: any) {
+        setSurfError(e?.message ?? "Failed to load surf spots.");
+        setSurfSpots([]);
+      } finally {
+        setSurfBusy(false);
+      }
+    }
+
+    fetchSurf();
+  }, [canFetch, mode, lat, lon]);
+
 
   // Fetch trail markers when in "trails" mode
   useEffect(() => {
@@ -275,13 +303,20 @@ export default function Page() {
             {mapSubtitle}
           </div>
 
+	  {mode === "surf" ? (
+	    <div style={{ marginBottom: 8, fontSize: 12, color: "#444" }}>
+	      surfSpots count: {surfSpots.length}
+	    </div>
+	  ) : null}
+
           <MapViewDynamic
             lat={lat!}
             lon={lon!}
             places={mode === "places" ? places : []}
             trailItems={mode === "trails" ? trailItems : []}
             trailLines={mode === "trails" ? selectedTrailLines : []}
-            onLoadTrailLine={loadLinesFor}
+            surfSpots={mode === "surf" ? surfSpots : []}
+	    onLoadTrailLine={loadLinesFor}
           />
 
           {/* Places status */}
@@ -336,13 +371,19 @@ export default function Page() {
               <div
                 key={a.id}
                 onClick={() => {
-                  if (a.id === "hike") {
-                    setMode("trails");
-                  } else {
-                    setMode("places");
-                    setSelectedPlaceType(placeTypeForActivity(a.id));
-                  }
-                }}
+		  if (a.id === "hike") {
+		    setMode("trails");
+		    return;
+		  }
+
+		  if (a.id === "surf") {
+		    setMode("surf");
+		    return;
+		  }
+
+		  setMode("places");
+		  setSelectedPlaceType(placeTypeForActivity(a.id));
+		}}
                 style={{ cursor: "pointer" }}
                 title={
                   a.id === "hike"

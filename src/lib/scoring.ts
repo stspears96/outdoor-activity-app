@@ -73,7 +73,7 @@ function computeActivityScore(
     bike:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.45, windWeight: 0.30, tempWeight: 0.25 },
     picnic: { temp: [50, 60, 78, 92], wind: [10, 20], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25 },
     cafe:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.55, windWeight: 0.15, tempWeight: 0.30 },
-    dogpark:{ temp: [45, 55, 75, 90], wind: [18, 30], precipWeight: 0.45, windWeight: 0.15, tempWeight: 0.40 },
+    surf:{ temp: [45, 55, 75, 90], wind: [18, 30], precipWeight: 0.45, windWeight: 0.15, tempWeight: 0.40 },
   };
 
   const p = prefs[id];
@@ -137,7 +137,7 @@ export function scoreActivities(weather: WeatherResponse, windowHours: number) {
     { id: "bike", name: "Bike" },
     { id: "picnic", name: "Picnic" },
     { id: "cafe", name: "Outdoor café" },
-    { id: "dogpark", name: "Dog park" },
+    { id: "surf", name: "Surf" },
   ];
 
   const activities = catalog

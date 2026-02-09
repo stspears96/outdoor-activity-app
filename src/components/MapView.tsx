@@ -3,6 +3,7 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
 import L from "leaflet";
 import type { Place, TrailItem, TrailLine } from "@/lib/types";
+import type { SurfSpotMarker } from "./MapViewDynamic"; // or define it in types.ts and import from there
 
 const DefaultIcon = L.icon({
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
@@ -13,7 +14,7 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-export function MapView(props: {
+export default function MapView(props: {
   lat: number;
   lon: number;
   height?: number;
@@ -21,6 +22,7 @@ export function MapView(props: {
   places?: Place[];
   trailItems?: TrailItem[];
   trailLines?: TrailLine[];
+  surfSpots?: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way", id: number, label: string) => void;
 }) {
   const {
@@ -31,6 +33,7 @@ export function MapView(props: {
     places = [],
     trailItems = [],
     trailLines = [],
+    surfSpots = [],
   } = props;
 
   return (
@@ -54,6 +57,19 @@ export function MapView(props: {
             </Popup>
           </Polyline>
         ))}
+
+	{surfSpots.map((s) => (
+	  <Marker key={s.id} position={[s.lat, s.lon]}>
+	    <Popup>
+	      <div style={{ fontWeight: 700 }}>🏄 {s.name}</div>
+	      <div style={{ fontSize: 12, color: "#555" }}>
+		{s.region ? s.region : ""}
+		{typeof s.distanceKm === "number" ? ` · ${s.distanceKm.toFixed(1)} km` : ""}
+	      </div>
+	    </Popup>
+	  </Marker>
+	))}
+
 
         {/* Your location marker */}
         <Marker position={[lat, lon]}>

@@ -1,28 +1,34 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { Place, TrailItem, TrailLine } from "@/lib/types";
 
-// Load the real MapView only on the client
-export const MapViewDynamic = dynamic(
-  () => import("./MapView").then(mod => mod.MapView),
-  {
-    ssr: false,
-    loading: () => (
-      <div
-        style={{
-          height: 360,
-          border: "1px solid #e5e5e5",
-          borderRadius: 14,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#666",
-          background: "#fafafa",
-        }}
-      >
-        Loading map…
-      </div>
-    ),
-  }
+export type SurfSpotMarker = {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  region?: string;
+  distanceKm?: number;
+};
+
+export type MapViewProps = {
+  lat: number;
+  lon: number;
+  height?: number;
+  label?: string;
+  places?: Place[];
+  trailItems?: TrailItem[];
+  trailLines?: TrailLine[];
+  surfSpots: SurfSpotMarker[];
+  onLoadTrailLine?: (refType: "relation" | "way", id: number, label: string) => void;
+};
+
+// IMPORTANT: resolve to the default export, not the module object
+const MapViewDynamic = dynamic<MapViewProps>(
+  () => import("./MapView").then((m) => m.default),
+  { ssr: false }
 );
+
+export default MapViewDynamic;
 

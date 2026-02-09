@@ -5,7 +5,7 @@ export type ActivityId =
   | "bike"
   | "picnic"
   | "cafe"
-  | "dogpark";
+  | "surf";
 
 export type ActivityScore = {
   id: ActivityId;
