@@ -72,6 +72,18 @@ function flipDeg180(d?: number) {
   return typeof x === "number" ? (x + 180) % 360 : undefined;
 }
 
+// Convert meteorological degrees (0=N) to CSS rotation for an arrow that points EAST at 0deg.
+function meteoToCssRotation(meteoDeg?: number) {
+  const d = normalizeDeg(meteoDeg);
+  return typeof d === "number" ? (d - 90 + 360) % 360 : undefined;
+}
+
+// If API gives "wind FROM" degrees, convert to direction the wind is blowing TO.
+function windFromToWindTo(windFromDeg?: number) {
+  const d = normalizeDeg(windFromDeg);
+  return typeof d === "number" ? (d + 180) % 360 : undefined;
+}
+
 export default function MapView(props: {
   lat: number;
   lon: number;
@@ -117,17 +129,19 @@ export default function MapView(props: {
         ))}
 
 	{surfSpots.map((s) => {
-	  const windDir = s.conditions?.windDirDeg;
 	  const windKts = s.conditions?.windSpeedKts;
 
 	  // Prefer swell; fall back to wave
-	  const swellDir = s.conditions?.swellDirDeg ?? s.conditions?.waveDirDeg;
 	  const swellH = s.conditions?.swellHeightM ?? s.conditions?.waveHeightM;
 	  const swellP = s.conditions?.swellPeriodS ?? s.conditions?.wavePeriodS;
+	  const windFrom = s.conditions?.windDirDeg;          // e.g. 53 means FROM NE
+	  const windTo = windFromToWindTo(windFrom);          // 233 means blowing toward SW
+	  const windArrowCssDeg = meteoToCssRotation(windTo); // convert to CSS rotation
 
-	  // If arrows look backwards in practice, flip these (common tweak):
-	  const windArrowDeg = flipDeg180(windDir);   // wind: "from" -> arrow "towards"
-	  const swellArrowDeg = normalizeDeg(swellDir); // swell often already "towards"; flip if needed
+	  const swellDir = s.conditions?.swellDirDeg ?? s.conditions?.waveDirDeg;
+	  // For swell, Open-Meteo directions are typically "to" (direction waves travel).
+	  // If yours looks reversed, we’ll flip later, but start with this:
+	  const swellArrowCssDeg = meteoToCssRotation(swellDir);
 
 	  // Offset a tiny bit so arrows don't sit directly on the pin
 	  const dLat = 0.0012; // ~130m (depends on latitude; fine for UI)
@@ -166,25 +180,23 @@ export default function MapView(props: {
 		  ) : null}
 		</Popup>
 	      </Marker>
-
-	      {/* Wind arrow */}
-	      {typeof windArrowDeg === "number" ? (
-		<Marker
-		  position={[s.lat + dLat, s.lon + dLon]}
-		  icon={makeArrowDivIcon({ kind: "wind", deg: windArrowDeg })}
-		  interactive={false}
-		/>
+	      {typeof windArrowCssDeg === "number" ? (
+	        <Marker
+	          position={[s.lat + dLat, s.lon + dLon]}
+	          icon={makeArrowDivIcon({ kind: "wind", deg: windArrowCssDeg })}
+	          interactive={false}
+	        />
 	      ) : null}
 
-	      {/* Swell arrow */}
-	      {typeof swellArrowDeg === "number" ? (
-		<Marker
-		  position={[s.lat + dLat, s.lon - dLon]}
-		  icon={makeArrowDivIcon({ kind: "swell", deg: swellArrowDeg })}
-		  interactive={false}
-		/>
+	      {typeof swellArrowCssDeg === "number" ? (
+	        <Marker
+	          position={[s.lat + dLat, s.lon - dLon]}
+	          icon={makeArrowDivIcon({ kind: "swell", deg: swellArrowCssDeg })}
+	          interactive={false}
+	        />
 	      ) : null}
-	    </div>
+
+  	      </div>
 	  );
 	})}
 
