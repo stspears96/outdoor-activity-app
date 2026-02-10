@@ -10,6 +10,21 @@ export type SurfSpotMarker = {
   lon: number;
   region?: string;
   distanceKm?: number;
+
+  // from /api/surf scoring
+  score?: number;
+  quality?: "poor" | "fair" | "good" | "excellent";
+  reasons?: string[];
+  conditions?: {
+    windSpeedKts?: number;
+    windDirDeg?: number;   // degrees
+    swellHeightM?: number;
+    swellPeriodS?: number;
+    swellDirDeg?: number;  // degrees
+    waveHeightM?: number;
+    wavePeriodS?: number;
+    waveDirDeg?: number;
+  };
 };
 
 export type MapViewProps = {

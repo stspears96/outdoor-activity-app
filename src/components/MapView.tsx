@@ -14,6 +14,64 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+function degToRotationStyle(deg?: number) {
+  const d = typeof deg === "number" ? deg : 0;
+  return `rotate(${d}deg)`;
+}
+
+function makeArrowDivIcon(opts: {
+  kind: "wind" | "swell";
+  deg?: number;
+  label?: string;
+}) {
+  const { kind, deg, label } = opts;
+
+  // Emojis: wind arrow vs wave arrow
+  const glyph = kind === "wind" ? "➤" : "➤";
+  const title = kind === "wind" ? "Wind" : "Swell";
+
+  // Small, readable, rotates via inline style
+  const html = `
+    <div style="
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      transform:${degToRotationStyle(deg)};
+      transform-origin:center;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25));
+      ">
+      <div style="
+        font-size:18px;
+        line-height:18px;
+        font-weight:800;
+        color:${kind === "wind" ? "#0b5" : "#06c"};
+        ">
+        ${glyph}
+      </div>
+    </div>
+  `;
+
+  return L.divIcon({
+    className: "", // prevent default leaflet styles
+    html,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+    popupAnchor: [0, -10],
+  });
+}
+
+function normalizeDeg(d?: number) {
+  if (typeof d !== "number") return undefined;
+  let x = d % 360;
+  if (x < 0) x += 360;
+  return x;
+}
+
+function flipDeg180(d?: number) {
+  const x = normalizeDeg(d);
+  return typeof x === "number" ? (x + 180) % 360 : undefined;
+}
+
 export default function MapView(props: {
   lat: number;
   lon: number;
@@ -58,20 +116,80 @@ export default function MapView(props: {
           </Polyline>
         ))}
 
-	{surfSpots.map((s) => (
-	  <Marker key={s.id} position={[s.lat, s.lon]}>
-	    <Popup>
-	      <div style={{ fontWeight: 700 }}>🏄 {s.name}</div>
-	      <div style={{ fontSize: 12, color: "#555" }}>
-		{s.region ? s.region : ""}
-		{typeof s.distanceKm === "number" ? ` · ${s.distanceKm.toFixed(1)} km` : ""}
-	      </div>
-	    </Popup>
-	  </Marker>
-	))}
+	{surfSpots.map((s) => {
+	  const windDir = s.conditions?.windDirDeg;
+	  const windKts = s.conditions?.windSpeedKts;
+
+	  // Prefer swell; fall back to wave
+	  const swellDir = s.conditions?.swellDirDeg ?? s.conditions?.waveDirDeg;
+	  const swellH = s.conditions?.swellHeightM ?? s.conditions?.waveHeightM;
+	  const swellP = s.conditions?.swellPeriodS ?? s.conditions?.wavePeriodS;
+
+	  // If arrows look backwards in practice, flip these (common tweak):
+	  const windArrowDeg = flipDeg180(windDir);   // wind: "from" -> arrow "towards"
+	  const swellArrowDeg = normalizeDeg(swellDir); // swell often already "towards"; flip if needed
+
+	  // Offset a tiny bit so arrows don't sit directly on the pin
+	  const dLat = 0.0012; // ~130m (depends on latitude; fine for UI)
+	  const dLon = 0.0012;
+
+	  return (
+	    <div key={s.id}>
+	      {/* Main marker pin */}
+	      <Marker position={[s.lat, s.lon]}>
+		<Popup>
+		  <div style={{ fontWeight: 800 }}>🏄 {s.name}</div>
+
+		  {s.quality ? (
+		    <div style={{ marginTop: 4 }}>
+		      <strong>{String(s.quality).toUpperCase()}</strong>
+		      {typeof s.score === "number" ? ` · ${s.score}/100` : ""}
+		    </div>
+		  ) : null}
+
+		  <div style={{ marginTop: 6, fontSize: 12, color: "#444" }}>
+		    {typeof windKts === "number"
+		      ? `Wind: ${windKts.toFixed(0)} kt @ ${normalizeDeg(windDir)?.toFixed(0)}°`
+		      : "Wind: —"}
+		    <br />
+		    {typeof swellH === "number" && typeof swellP === "number"
+		      ? `Swell: ${swellH.toFixed(1)} m @ ${swellP.toFixed(0)}s @ ${normalizeDeg(swellDir)?.toFixed(0)}°`
+		      : "Swell: —"}
+		  </div>
+
+		  {Array.isArray(s.reasons) && s.reasons.length ? (
+		    <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
+		      {s.reasons.slice(0, 4).map((r, idx) => (
+			<li key={idx} style={{ fontSize: 12 }}>{r}</li>
+		      ))}
+		    </ul>
+		  ) : null}
+		</Popup>
+	      </Marker>
+
+	      {/* Wind arrow */}
+	      {typeof windArrowDeg === "number" ? (
+		<Marker
+		  position={[s.lat + dLat, s.lon + dLon]}
+		  icon={makeArrowDivIcon({ kind: "wind", deg: windArrowDeg })}
+		  interactive={false}
+		/>
+	      ) : null}
+
+	      {/* Swell arrow */}
+	      {typeof swellArrowDeg === "number" ? (
+		<Marker
+		  position={[s.lat + dLat, s.lon - dLon]}
+		  icon={makeArrowDivIcon({ kind: "swell", deg: swellArrowDeg })}
+		  interactive={false}
+		/>
+	      ) : null}
+	    </div>
+	  );
+	})}
 
 
-        {/* Your location marker */}
+	{/* Your location marker */}
         <Marker position={[lat, lon]}>
           <Popup>{label}</Popup>
         </Marker>

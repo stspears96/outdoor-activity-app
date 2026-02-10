@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 
 const DB_PATH = path.join(process.cwd(), "data", "surfspots.sqlite");
 
-// Simple haversine (km)
+// ---------- helpers ----------
 function haversineKm(aLat: number, aLon: number, bLat: number, bLon: number) {
   const R = 6371;
   const dLat = ((bLat - aLat) * Math.PI) / 180;
@@ -17,23 +17,233 @@ function haversineKm(aLat: number, aLon: number, bLat: number, bLon: number) {
   return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function inDegWindow(deg: number, minDeg: number, maxDeg: number) {
+  // Handles wrap-around windows like [330, 60]
+  const d = ((deg % 360) + 360) % 360;
+  const a = ((minDeg % 360) + 360) % 360;
+  const b = ((maxDeg % 360) + 360) % 360;
+  if (a <= b) return d >= a && d <= b;
+  return d >= a || d <= b;
+}
+
+function msToKnots(ms: number) {
+  return ms * 1.943844;
+}
+
+type ScoredSpot = {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  region?: string | null;
+  break_type?: string | null;
+  difficulty?: string | null;
+
+  coast_orientation_deg?: number | null;
+  swell_min_deg?: number | null;
+  swell_max_deg?: number | null;
+  wind_offshore_min_deg?: number | null;
+  wind_offshore_max_deg?: number | null;
+  tide_preference?: string | null;
+
+  distanceKm: number;
+
+  // added by scoring
+  conditions?: {
+    windSpeedKts?: number;
+    windDirDeg?: number;
+    waveHeightM?: number;
+    wavePeriodS?: number;
+    waveDirDeg?: number;
+    swellHeightM?: number;
+    swellPeriodS?: number;
+    swellDirDeg?: number;
+  };
+
+  score?: number; // 0..100
+  quality?: "poor" | "fair" | "good" | "excellent";
+  reasons?: string[];
+};
+
+async function fetchJson(url: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      // cache for 10 minutes to reduce API calls while you click around
+      next: { revalidate: 600 },
+      headers: { "User-Agent": "outdoor-activity-app/1.0 (surf-score)" },
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+    return JSON.parse(text);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Open-Meteo supports multiple coordinates: comma-separated latitude/longitude,
+// and returns an array of responses. :contentReference[oaicite:2]{index=2}
+async function fetchWindForSpots(spots: ScoredSpot[]) {
+  const lats = spots.map((s) => s.lat).join(",");
+  const lons = spots.map((s) => s.lon).join(",");
+  const url =
+    `https://api.open-meteo.com/v1/forecast` +
+    `?latitude=${encodeURIComponent(lats)}` +
+    `&longitude=${encodeURIComponent(lons)}` +
+    `&current=wind_speed_10m,wind_direction_10m` +
+    `&wind_speed_unit=ms` +
+    `&timezone=UTC`;
+
+  const json = await fetchJson(url, 9000);
+  // When multiple coords are used, response becomes a list of structures. :contentReference[oaicite:3]{index=3}
+  return Array.isArray(json) ? json : [json];
+}
+
+async function fetchMarineForSpots(spots: ScoredSpot[]) {
+  const lats = spots.map((s) => s.lat).join(",");
+  const lons = spots.map((s) => s.lon).join(",");
+  const url =
+    `https://marine-api.open-meteo.com/v1/marine` +
+    `?latitude=${encodeURIComponent(lats)}` +
+    `&longitude=${encodeURIComponent(lons)}` +
+    `&current=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period` +
+    `&cell_selection=sea` +
+    `&timezone=UTC`;
+
+  const json = await fetchJson(url, 9000);
+  return Array.isArray(json) ? json : [json];
+}
+
+function scoreSpot(spot: ScoredSpot): { score: number; quality: ScoredSpot["quality"]; reasons: string[] } {
+  const reasons: string[] = [];
+  let score = 50; // neutral baseline
+
+  const c = spot.conditions ?? {};
+  const windDir = c.windDirDeg;
+  const windKts = c.windSpeedKts;
+
+  // Prefer swell vars, fall back to wave vars
+  const swellDir = c.swellDirDeg ?? c.waveDirDeg;
+  const swellH = c.swellHeightM ?? c.waveHeightM;
+  const swellP = c.swellPeriodS ?? c.wavePeriodS;
+
+  // ---- Wind scoring ----
+  if (typeof windDir === "number" && spot.wind_offshore_min_deg != null && spot.wind_offshore_max_deg != null) {
+    const off = inDegWindow(windDir, spot.wind_offshore_min_deg, spot.wind_offshore_max_deg);
+    if (off) {
+      score += 18;
+      reasons.push("Offshore wind direction ✅");
+    } else {
+      score -= 12;
+      reasons.push("Wind not offshore ⚠️");
+    }
+  } else if (typeof windDir === "number") {
+    reasons.push("Wind direction available (no offshore window set)");
+  }
+
+  if (typeof windKts === "number") {
+    if (windKts <= 8) {
+      score += 10;
+      reasons.push("Light wind ✅");
+    } else if (windKts <= 14) {
+      score += 4;
+      reasons.push("Moderate wind");
+    } else if (windKts <= 20) {
+      score -= 6;
+      reasons.push("Breezy ⚠️");
+    } else {
+      score -= 14;
+      reasons.push("Very windy ❌");
+    }
+  }
+
+  // ---- Swell direction scoring ----
+  if (
+    typeof swellDir === "number" &&
+    spot.swell_min_deg != null &&
+    spot.swell_max_deg != null
+  ) {
+    const inWindow = inDegWindow(swellDir, spot.swell_min_deg, spot.swell_max_deg);
+    if (inWindow) {
+      score += 16;
+      reasons.push("Swell direction in window ✅");
+    } else {
+      score -= 8;
+      reasons.push("Swell direction not ideal ⚠️");
+    }
+  } else if (typeof swellDir === "number") {
+    reasons.push("Swell direction available (no window set)");
+  }
+
+  // ---- Swell height scoring (very rough, beginner-friendly default) ----
+  if (typeof swellH === "number") {
+    // meters → simple buckets
+    if (swellH < 0.5) {
+      score -= 10;
+      reasons.push("Small surf ❌");
+    } else if (swellH < 1.2) {
+      score += 6;
+      reasons.push("Playable size ✅");
+    } else if (swellH < 2.2) {
+      score += 10;
+      reasons.push("Solid size ✅");
+    } else {
+      score -= 4;
+      reasons.push("Very large (could be heavy) ⚠️");
+    }
+  }
+
+  // ---- Period scoring ----
+  if (typeof swellP === "number") {
+    if (swellP >= 14) {
+      score += 12;
+      reasons.push("Long period ✅");
+    } else if (swellP >= 11) {
+      score += 8;
+      reasons.push("Good period ✅");
+    } else if (swellP >= 8) {
+      score += 3;
+      reasons.push("Shorter period");
+    } else {
+      score -= 6;
+      reasons.push("Weak/short period ❌");
+    }
+  }
+
+  score = clamp(Math.round(score), 0, 100);
+
+  let quality: ScoredSpot["quality"] = "poor";
+  if (score >= 78) quality = "excellent";
+  else if (score >= 60) quality = "good";
+  else if (score >= 42) quality = "fair";
+
+  return { score, quality, reasons };
+}
+
+// ---------- handler ----------
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
 
   const lat = Number(searchParams.get("lat"));
   const lon = Number(searchParams.get("lon"));
-  const radiusKm = Number(searchParams.get("radiusKm") ?? "50");
+  const radiusKm = Number(searchParams.get("radiusKm") ?? "80");
+  const limit = clamp(Number(searchParams.get("limit") ?? "30"), 1, 60);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return NextResponse.json({ error: "Missing lat/lon" }, { status: 400 });
   }
 
-  const db = new Database(DB_PATH, { readonly: true });
-
-  // Bounding-box prefilter (fast)
+  // SQLite bounding box
   const latDelta = radiusKm / 111;
   const lonDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
 
+  const db = new Database(DB_PATH, { readonly: true });
   const rows = db
     .prepare(
       `
@@ -44,23 +254,88 @@ export async function GET(req: Request) {
       `
     )
     .all(lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta);
-
   db.close();
 
-  // Precise distance filter
-  const spots = rows
+  const spots0: ScoredSpot[] = rows
     .map((s: any) => ({
       ...s,
       distanceKm: haversineKm(lat, lon, s.lat, s.lon),
     }))
     .filter((s: any) => s.distanceKm <= radiusKm)
-    .sort((a: any, b: any) => a.distanceKm - b.distanceKm);
+    .sort((a: any, b: any) => a.distanceKm - b.distanceKm)
+    .slice(0, limit);
+
+  // If no spots, return early
+  if (spots0.length === 0) {
+    return NextResponse.json({ lat, lon, count: 0, spots: [] });
+  }
+
+  // Fetch conditions in 2 batched calls (wind + marine)
+  let windResp: any[] = [];
+  let marineResp: any[] = [];
+  const debug: any = {};
+
+  try {
+    windResp = await fetchWindForSpots(spots0);
+    debug.wind = { ok: true };
+  } catch (e: any) {
+    debug.wind = { ok: false, error: e?.message ?? String(e) };
+  }
+
+  try {
+    marineResp = await fetchMarineForSpots(spots0);
+    debug.marine = { ok: true };
+  } catch (e: any) {
+    debug.marine = { ok: false, error: e?.message ?? String(e) };
+  }
+
+  // Attach conditions by index (Open-Meteo returns in the same order as coordinates)
+  const spots: ScoredSpot[] = spots0.map((s, i) => {
+    const w = windResp[i]?.current;
+    const m = marineResp[i]?.current;
+
+    const windSpeedKts =
+      typeof w?.wind_speed_10m === "number" ? msToKnots(w.wind_speed_10m) : undefined;
+    const windDirDeg = typeof w?.wind_direction_10m === "number" ? w.wind_direction_10m : undefined;
+
+    const waveHeightM = typeof m?.wave_height === "number" ? m.wave_height : undefined;
+    const waveDirDeg = typeof m?.wave_direction === "number" ? m.wave_direction : undefined;
+    const wavePeriodS = typeof m?.wave_period === "number" ? m.wave_period : undefined;
+
+    const swellHeightM = typeof m?.swell_wave_height === "number" ? m.swell_wave_height : undefined;
+    const swellDirDeg = typeof m?.swell_wave_direction === "number" ? m.swell_wave_direction : undefined;
+    const swellPeriodS = typeof m?.swell_wave_period === "number" ? m.swell_wave_period : undefined;
+
+    const spot2: ScoredSpot = {
+      ...s,
+      conditions: {
+        windSpeedKts,
+        windDirDeg,
+        waveHeightM,
+        waveDirDeg,
+        wavePeriodS,
+        swellHeightM,
+        swellDirDeg,
+        swellPeriodS,
+      },
+    };
+
+    const { score, quality, reasons } = scoreSpot(spot2);
+    spot2.score = score;
+    spot2.quality = quality;
+    spot2.reasons = reasons;
+    return spot2;
+  });
+
+  // Sort by score first, then distance (so the best pops to the top)
+  spots.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.distanceKm - b.distanceKm);
 
   return NextResponse.json({
     lat,
     lon,
     count: spots.length,
     spots,
+    debug,
   });
 }
 
