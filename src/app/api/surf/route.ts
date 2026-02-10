@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import { fetchCdipLatest } from "@/lib/cdip";
 
 const DB_PATH = path.join(process.cwd(), "data", "surfspots.sqlite");
 
@@ -270,6 +271,23 @@ export async function GET(req: Request) {
     return NextResponse.json({ lat, lon, count: 0, spots: [] });
   }
 
+  const transects = Array.from(
+    new Set(
+      spots0
+        .map((s: any) => (s.cdip_transect_id as string | null) ?? null)
+        .filter((x): x is string => !!x)
+    )
+  );
+
+  // Fetch once per transect (parallel)
+  const cdipByTransect = new Map<string, Awaited<ReturnType<typeof fetchCdipLatest>>>();
+  await Promise.all(
+    transects.map(async (t) => {
+      const v = await fetchCdipLatest(t);
+      cdipByTransect.set(t, v);
+    })
+  );
+
   // Fetch conditions in 2 batched calls (wind + marine)
   let windResp: any[] = [];
   let marineResp: any[] = [];
@@ -302,9 +320,26 @@ export async function GET(req: Request) {
     const waveDirDeg = typeof m?.wave_direction === "number" ? m.wave_direction : undefined;
     const wavePeriodS = typeof m?.wave_period === "number" ? m.wave_period : undefined;
 
-    const swellHeightM = typeof m?.swell_wave_height === "number" ? m.swell_wave_height : undefined;
-    const swellDirDeg = typeof m?.swell_wave_direction === "number" ? m.swell_wave_direction : undefined;
-    const swellPeriodS = typeof m?.swell_wave_period === "number" ? m.swell_wave_period : undefined;
+    const cdip = s.cdip_transect_id ? cdipByTransect.get(s.cdip_transect_id) : undefined;
+
+    // CDIP swell: use waveDm (bulk direction) + waveTp + waveHs
+    const cdipSwellHeightM =
+      cdip?.ok && typeof cdip.waveHs === "number" ? cdip.waveHs : undefined;
+    const cdipSwellPeriodS =
+      cdip?.ok && typeof cdip.waveTp === "number" ? cdip.waveTp : undefined;
+    const cdipSwellDirDeg =
+      cdip?.ok && typeof cdip.waveDm === "number" ? cdip.waveDm : undefined;
+
+    // Fall back to your existing marine/Open-Meteo values if CDIP missing
+    const swellHeightM =
+      cdipSwellHeightM ?? (typeof m?.swell_wave_height === "number" ? m.swell_wave_height : undefined);
+    const swellPeriodS =
+      cdipSwellPeriodS ?? (typeof m?.swell_wave_period === "number" ? m.swell_wave_period : undefined);
+    const swellDirDeg =
+      cdipSwellDirDeg ?? (typeof m?.swell_wave_direction === "number" ? m.swell_wave_direction : undefined);
+
+    const swellSource =
+      cdip?.ok ? `CDIP:${cdip.transect}` : "open-meteo";
 
     const spot2: ScoredSpot = {
       ...s,
@@ -317,6 +352,7 @@ export async function GET(req: Request) {
         swellHeightM,
         swellDirDeg,
         swellPeriodS,
+	swellSource,
       },
     };
 

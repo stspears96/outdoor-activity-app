@@ -367,7 +367,7 @@ export default function Page() {
               marginTop: 12,
             }}
           >
-            {data.activities.slice(0, 6).map((a) => (
+            {data.activities.filter((a) => a.id !== "walk").slice(0, 6).map((a) => (
               <div
                 key={a.id}
                 onClick={() => {

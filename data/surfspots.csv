@@ -1,5 +1,5 @@
-id,name,lat,lon,region,break_type,difficulty,coast_orientation_deg,swell_min_deg,swell_max_deg,wind_offshore_min_deg,wind_offshore_max_deg,tide_preference
-ocean-beach-north,Ocean Beach (North),37.7807,-122.5139,San Francisco,beach,advanced,270,230,320,60,140,mid
-ocean-beach-south,Ocean Beach (South),37.7327,-122.5086,San Francisco,beach,intermediate,270,220,300,60,140,mid
-linda-mar,Linda Mar,37.5994,-122.5070,Pacifica,beach,beginner,260,230,310,40,120,any
+id,name,lat,lon,region,break_type,difficulty,coast_orientation_deg,swell_min_deg,swell_max_deg,wind_offshore_min_deg,wind_offshore_max_deg,tide_preference,cdip_transect_id
+ocean-beach-north,Ocean Beach (North),37.7807,-122.5139,San Francisco,beach,advanced,270,230,320,60,140,mid,SF035
+ocean-beach-south,Ocean Beach (South),37.7327,-122.5086,San Francisco,beach,intermediate,270,220,300,60,140,mid,SF018
+linda-mar,Linda Mar,37.5994,-122.5070,Pacifica,beach,beginner,260,230,310,40,120,any,SM381
 

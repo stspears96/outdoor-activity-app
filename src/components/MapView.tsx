@@ -129,6 +129,7 @@ export default function MapView(props: {
         ))}
 
 	{surfSpots.map((s) => {
+	  const windDir = s.conditions?.windDirDeg;
 	  const windKts = s.conditions?.windSpeedKts;
 
 	  // Prefer swell; fall back to wave
@@ -138,10 +139,14 @@ export default function MapView(props: {
 	  const windTo = windFromToWindTo(windFrom);          // 233 means blowing toward SW
 	  const windArrowCssDeg = meteoToCssRotation(windTo); // convert to CSS rotation
 
+	  // If arrows look backwards in practice, flip these (common tweak):
+	  const windArrowDeg = flipDeg180(windDir);   // wind: "from" -> arrow "towards"
+
 	  const swellDir = s.conditions?.swellDirDeg ?? s.conditions?.waveDirDeg;
+	  const swellArrowDeg = normalizeDeg(swellDir); // swell often already "towards"; flip if needed
 	  // For swell, Open-Meteo directions are typically "to" (direction waves travel).
 	  // If yours looks reversed, we’ll flip later, but start with this:
-	  const swellArrowCssDeg = meteoToCssRotation(swellDir);
+	  const swellArrowCssDeg = windFromToWindTo(meteoToCssRotation(swellDir));
 
 	  // Offset a tiny bit so arrows don't sit directly on the pin
 	  const dLat = 0.0012; // ~130m (depends on latitude; fine for UI)
