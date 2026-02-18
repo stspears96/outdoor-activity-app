@@ -9,7 +9,7 @@ function isoNowPlusHours(hours: number) {
 function parseCsv(text: string) {
   const lines = text.split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim());
+  const headers = lines[0].split(",").map((h) => h.trim().replace(/\[.*\]$/, ""));
 
   return lines.slice(1).map((line) => {
     const cols = line.split(",");

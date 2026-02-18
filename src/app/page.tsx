@@ -11,6 +11,7 @@ import type {
 import { GeoButton } from "@/components/GeoButton";
 import { ActivityCard } from "@/components/ActivityCard";
 import MapViewDynamic from "@/components/MapViewDynamic";
+import SwellForecastModal from "@/components/SwellForecastModal";
 
 export default function Page() {
   const [lat, setLat] = useState<number | null>(null);
@@ -49,6 +50,9 @@ export default function Page() {
   const [surfBusy, setSurfBusy] = useState(false);
   const [surfError, setSurfError] = useState<string | null>(null);
 
+  // ---- Swell forecast modal ----
+  const [forecastSpot, setForecastSpot] = useState<{ name: string; transectId: string } | null>(null);
+
   const canFetch = useMemo(
     () => typeof lat === "number" && typeof lon === "number",
     [lat, lon]
@@ -67,7 +71,7 @@ export default function Page() {
       case "cafe":
         return "cafe";
       case "surf":
-        return "surf";
+        return "park"; // unreachable — surf sets mode directly
       case "walk":
       default:
         return "park";
@@ -134,7 +138,11 @@ export default function Page() {
         const res = await fetch(`/api/surf?lat=${lat}&lon=${lon}&radiusKm=60`);
         if (!res.ok) throw new Error(`Surf request failed: ${res.status}`);
         const json = await res.json();
-        setSurfSpots(json.spots ?? []);
+        const spots = (json.spots ?? []).map((s: any) => ({
+          ...s,
+          cdipTransectId: s.cdip_transect_id ?? null,
+        }));
+        setSurfSpots(spots);
       } catch (e: any) {
         setSurfError(e?.message ?? "Failed to load surf spots.");
         setSurfSpots([]);
@@ -317,6 +325,7 @@ export default function Page() {
             trailLines={mode === "trails" ? selectedTrailLines : []}
             surfSpots={mode === "surf" ? surfSpots : []}
 	    onLoadTrailLine={loadLinesFor}
+	    onViewForecast={(name, transectId) => setForecastSpot({ name, transectId })}
           />
 
           {/* Places status */}
@@ -477,6 +486,14 @@ export default function Page() {
       ) : busy ? (
         <div style={{ marginTop: 18, color: "#444" }}>Loading recommendations…</div>
       ) : null}
+
+      {forecastSpot && (
+        <SwellForecastModal
+          name={forecastSpot.name}
+          transectId={forecastSpot.transectId}
+          onClose={() => setForecastSpot(null)}
+        />
+      )}
     </main>
   );
 }

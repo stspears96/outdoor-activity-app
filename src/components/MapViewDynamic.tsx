@@ -11,6 +11,8 @@ export type SurfSpotMarker = {
   region?: string;
   distanceKm?: number;
 
+  cdipTransectId?: string | null;
+
   // from /api/surf scoring
   score?: number;
   quality?: "poor" | "fair" | "good" | "excellent";
@@ -37,6 +39,7 @@ export type MapViewProps = {
   trailLines?: TrailLine[];
   surfSpots: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way", id: number, label: string) => void;
+  onViewForecast?: (name: string, transectId: string) => void;
 };
 
 // IMPORTANT: resolve to the default export, not the module object

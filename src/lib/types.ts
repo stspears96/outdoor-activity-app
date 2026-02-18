@@ -47,6 +47,17 @@ export type RecommendationsResponse = {
   }>;
 };
 
+export type PlaceType = "park" | "trail" | "cafe" | "dogpark" | "viewpoint";
+
+export type Place = {
+  id: string;
+  type: PlaceType;
+  name: string;
+  lat: number;
+  lon: number;
+  osmUrl?: string;
+};
+
 export type TrailItemType = "trailhead" | "hiking_route" | "path";
 
 export type TrailItem = {
@@ -77,9 +88,9 @@ export type TrailsResponse = {
   lon: number;
   radiusMiles: number;
   countItems: number;
-  countLines: number;
+  countLines?: number;
   items: TrailItem[];
-  lines: TrailLine[];
+  lines?: TrailLine[];
   overpassEndpoint?: string;
 };
 

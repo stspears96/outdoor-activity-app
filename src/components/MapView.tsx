@@ -94,6 +94,7 @@ export default function MapView(props: {
   trailLines?: TrailLine[];
   surfSpots?: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way", id: number, label: string) => void;
+  onViewForecast?: (name: string, transectId: string) => void;
 }) {
   const {
     lat,
@@ -183,6 +184,23 @@ export default function MapView(props: {
 		      ))}
 		    </ul>
 		  ) : null}
+
+		  {s.cdipTransectId && props.onViewForecast ? (
+		    <button
+		      onClick={() => props.onViewForecast!(s.name, s.cdipTransectId!)}
+		      style={{
+			marginTop: 8,
+			padding: "6px 8px",
+			borderRadius: 10,
+			border: "1px solid #ddd",
+			background: "white",
+			cursor: "pointer",
+			fontSize: 12,
+		      }}
+		    >
+		      View Forecast
+		    </button>
+		  ) : null}
 		</Popup>
 	      </Marker>
 	      {typeof windArrowCssDeg === "number" ? (
@@ -246,7 +264,7 @@ export default function MapView(props: {
 
 	      {t.refType && t.refId && (t.refType === "relation" || t.refType === "way") ? (
 		<button
-		  onClick={() => props.onLoadTrailLine?.(t.refType, t.refId!, t.name)}
+		  onClick={() => props.onLoadTrailLine?.(t.refType as "relation" | "way", t.refId!, t.name)}
 		  style={{
 		    marginTop: 8,
 		    padding: "6px 8px",

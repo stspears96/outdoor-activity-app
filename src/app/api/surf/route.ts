@@ -50,6 +50,7 @@ type ScoredSpot = {
   wind_offshore_min_deg?: number | null;
   wind_offshore_max_deg?: number | null;
   tide_preference?: string | null;
+  cdip_transect_id?: string | null;
 
   distanceKm: number;
 
@@ -63,6 +64,7 @@ type ScoredSpot = {
     swellHeightM?: number;
     swellPeriodS?: number;
     swellDirDeg?: number;
+    swellSource?: string;
   };
 
   score?: number; // 0..100
