@@ -14,6 +14,17 @@ const DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+const RedIcon = L.divIcon({
+  className: "",
+  html: `<svg xmlns="http://www.w3.org/2000/svg" width="25" height="41" viewBox="0 0 25 41">
+    <path d="M12.5 0C5.6 0 0 5.6 0 12.5C0 22.5 12.5 41 12.5 41C12.5 41 25 22.5 25 12.5C25 5.6 19.4 0 12.5 0Z" fill="#e53e3e" stroke="white" stroke-width="1.5"/>
+    <circle cx="12.5" cy="12.5" r="4.5" fill="white"/>
+  </svg>`,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+});
+
 function degToRotationStyle(deg?: number) {
   const d = typeof deg === "number" ? deg : 0;
   return `rotate(${d}deg)`;
@@ -225,7 +236,7 @@ export default function MapView(props: {
 
 
 	{/* Your location marker */}
-        <Marker position={[lat, lon]}>
+        <Marker position={[lat, lon]} icon={RedIcon}>
           <Popup>{label}</Popup>
         </Marker>
 
