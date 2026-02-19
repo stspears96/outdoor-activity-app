@@ -3,6 +3,7 @@ export type ActivityId =
   | "run"
   | "hike"
   | "bike"
+  | "mtb"
   | "picnic"
   | "cafe"
   | "surf";

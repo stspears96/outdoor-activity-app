@@ -50,7 +50,10 @@ export async function GET(req: Request) {
   const latDelta = radiusKm / 111;
   const lonDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
 
-  const activityLike = activityType === "running" ? "%Running%" : "%Hiking%";
+  const activityLike =
+    activityType === "running" ? "%Running%" :
+    activityType === "mtb" ? "%Mountain Biking%" :
+    "%Hiking%";
 
   const db = new Database(DB_PATH, { readonly: true });
   const rows = db

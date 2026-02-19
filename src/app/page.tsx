@@ -25,7 +25,7 @@ export default function Page() {
 
   // Map mode: either show generic places (parks/cafes/etc.) or hiking markers
   const [mode, setMode] = useState<"places" | "trails" | "surf">("places");
-  const [trailActivityType, setTrailActivityType] = useState<"hike" | "run">("hike");
+  const [trailActivityType, setTrailActivityType] = useState<"hike" | "run" | "mtb">("hike");
 
   // ----- Places (OSM Overpass /api/places) -----
   const [selectedPlaceType, setSelectedPlaceType] = useState<PlaceType>("park");
@@ -173,9 +173,10 @@ export default function Page() {
       setUsfsLines(new Map());
 
       try {
-        if (trailActivityType === "run") {
-          const dbRes = await fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=running&radiusKm=40`);
-          if (!dbRes.ok) throw new Error(`Running spots request failed: ${dbRes.status}`);
+        if (trailActivityType === "run" || trailActivityType === "mtb") {
+          const activityType = trailActivityType === "run" ? "running" : "mtb";
+          const dbRes = await fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=${activityType}&radiusKm=40`);
+          if (!dbRes.ok) throw new Error(`${activityType} spots request failed: ${dbRes.status}`);
           const json = await dbRes.json();
           setTrailItems(json.items ?? []);
         } else {
@@ -269,6 +270,8 @@ export default function Page() {
     mode === "trails"
       ? trailActivityType === "run"
         ? "Running spots: click a marker for details"
+        : trailActivityType === "mtb"
+        ? "Mountain biking spots: click a marker for details"
         : `Hiking: click a trail marker, then "Load trail line" (within ${trailsRadiusMiles} mi)`
       : `Places: ${selectedPlaceType} (within ${radiusMiles} mi)`;
 
@@ -444,6 +447,12 @@ export default function Page() {
 
 		  if (a.id === "run") {
 		    setTrailActivityType("run");
+		    setMode("trails");
+		    return;
+		  }
+
+		  if (a.id === "mtb") {
+		    setTrailActivityType("mtb");
 		    setMode("trails");
 		    return;
 		  }
