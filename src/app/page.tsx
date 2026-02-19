@@ -9,6 +9,7 @@ import type {
   TrailLine,
 } from "@/lib/types";
 import { GeoButton } from "@/components/GeoButton";
+import { LocationSearch } from "@/components/LocationSearch";
 import { ActivityCard } from "@/components/ActivityCard";
 import MapViewDynamic from "@/components/MapViewDynamic";
 import SwellForecastModal from "@/components/SwellForecastModal";
@@ -16,6 +17,7 @@ import SwellForecastModal from "@/components/SwellForecastModal";
 export default function Page() {
   const [lat, setLat] = useState<number | null>(null);
   const [lon, setLon] = useState<number | null>(null);
+  const [locationLabel, setLocationLabel] = useState("You are here");
   const [windowHours, setWindowHours] = useState(6);
 
   // Recommendations (weather-based activity scores)
@@ -298,6 +300,15 @@ export default function Page() {
           onLocation={(la, lo) => {
             setLat(la);
             setLon(lo);
+            setLocationLabel("You are here");
+          }}
+        />
+
+        <LocationSearch
+          onLocation={(la, lo, name) => {
+            setLat(la);
+            setLon(lo);
+            setLocationLabel(name);
           }}
         />
 
@@ -345,7 +356,7 @@ export default function Page() {
             color: "#555",
           }}
         >
-          Click <b>Use my location</b> to get recommendations.
+          Click <b>Use my location</b> or search a destination to get recommendations.
         </div>
       ) : null}
 
@@ -379,6 +390,7 @@ export default function Page() {
           <MapViewDynamic
             lat={lat!}
             lon={lon!}
+            label={locationLabel}
             places={mode === "places" ? places : []}
             trailItems={mode === "trails" ? trailItems : []}
             trailLines={mode === "trails" ? selectedTrailLines : []}
