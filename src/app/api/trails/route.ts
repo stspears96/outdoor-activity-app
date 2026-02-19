@@ -17,9 +17,8 @@ function bestName(el: any, fallback: string) {
 }
 
 function classify(el: any): TrailItem["itemType"] {
-  if (el.type === "relation" && el.tags?.route === "hiking") return "hiking_route";
+  if (el.type === "relation" && (el.tags?.route === "hiking" || el.tags?.route === "foot")) return "hiking_route";
   if (el.type === "node" && el.tags?.highway === "trailhead") return "trailhead";
-  if (el.type === "node" && el.tags?.tourism === "information") return "trailhead";
   return "path";
 }
 
@@ -29,17 +28,10 @@ function buildTrailsMarkersQuery(lat: number, lon: number, radiusM: number) {
     (
       // Trailheads
       node["highway"="trailhead"](around:${radiusM},${lat},${lon});
-      node["tourism"="information"]["information"="guidepost"](around:${radiusM},${lat},${lon});
-      node["tourism"="information"]["information"="map"](around:${radiusM},${lat},${lon});
-      node["tourism"="information"]["information"="board"](around:${radiusM},${lat},${lon});
 
-      // Hiking routes as relations (marker at center)
+      // Curated hiking route relations only
       relation["route"="hiking"](around:${radiusM},${lat},${lon});
-
-      // A small set of explicitly-hiking-ish path ways as markers (center)
-      way["highway"="path"]["sac_scale"](around:${radiusM},${lat},${lon});
-      way["highway"="path"]["trail_visibility"](around:${radiusM},${lat},${lon});
-      way["highway"="footway"]["sac_scale"](around:${radiusM},${lat},${lon});
+      relation["route"="foot"](around:${radiusM},${lat},${lon});
     );
     out tags center;
   `;
@@ -123,11 +115,14 @@ export async function GET(req: Request) {
             : "Trail"
       );
 
+      const distanceTag = el.tags?.distance;
+      const miles = distanceTag ? parseFloat(distanceTag) : undefined;
+
       return {
         id: `${el.type}:${el.id}`,
         refType: el.type,
-	refId: el.id,
-	itemType,
+        refId: el.id,
+        itemType,
         name,
         lat: plat,
         lon: plon,
@@ -136,6 +131,8 @@ export async function GET(req: Request) {
         symbol: el.tags?.["osmc:symbol"],
         ref: el.tags?.ref,
         osmUrl: osmElementUrl(el),
+        source: "osm" as const,
+        miles: typeof miles === "number" && !isNaN(miles) ? miles : undefined,
       };
     })
     .filter((x: TrailItem | null): x is TrailItem => !!x)

@@ -33,13 +33,16 @@ export default function Page() {
   const [placesError, setPlacesError] = useState<string | null>(null);
   const radiusMiles = 2;
 
-  // ----- Trails markers (OSM Overpass /api/trails) -----
+  // ----- Trails markers (OSM Overpass /api/trails + USFS /api/trails-usfs) -----
   const [trailItems, setTrailItems] = useState<TrailItem[]>([]);
   const [trailsBusy, setTrailsBusy] = useState(false);
   const [trailsError, setTrailsError] = useState<string | null>(null);
   const trailsRadiusMiles = 6;
 
-  // ----- Selected trail lines (on-demand via /api/trail-lines-for) -----
+  // Pre-loaded USFS trail geometries (keyed by trail id, no second fetch needed)
+  const [usfsLines, setUsfsLines] = useState<Map<string, TrailLine>>(new Map());
+
+  // ----- Selected trail lines (on-demand via /api/trail-lines-for, or pre-loaded for USFS) -----
   const [selectedTrailLines, setSelectedTrailLines] = useState<TrailLine[]>([]);
   const [selectedTrailLabel, setSelectedTrailLabel] = useState<string | null>(null);
   const [selectedTrailBusy, setSelectedTrailBusy] = useState(false);
@@ -155,7 +158,7 @@ export default function Page() {
   }, [canFetch, mode, lat, lon]);
 
 
-  // Fetch trail markers when in "trails" mode
+  // Fetch trail markers when in "trails" mode (OSM + USFS in parallel)
   useEffect(() => {
     async function fetchTrails() {
       if (!canFetch || mode !== "trails") return;
@@ -166,14 +169,36 @@ export default function Page() {
       setSelectedTrailLines([]);
       setSelectedTrailLabel(null);
       setSelectedTrailError(null);
+      setUsfsLines(new Map());
 
       try {
-        const res = await fetch(
-          `/api/trails?lat=${lat}&lon=${lon}&radiusMiles=${trailsRadiusMiles}&limitItems=180`
-        );
-        if (!res.ok) throw new Error(`Trails request failed: ${res.status}`);
-        const json = await res.json();
-        setTrailItems(json.items ?? []);
+        const [osmRes, usfsRes] = await Promise.allSettled([
+          fetch(`/api/trails?lat=${lat}&lon=${lon}&radiusMiles=${trailsRadiusMiles}&limitItems=180`),
+          fetch(`/api/trails-usfs?lat=${lat}&lon=${lon}&radiusMiles=30`),
+        ]);
+
+        let osmItems: TrailItem[] = [];
+        if (osmRes.status === "fulfilled" && osmRes.value.ok) {
+          const json = await osmRes.value.json();
+          osmItems = json.items ?? [];
+        } else if (osmRes.status === "rejected" || (osmRes.status === "fulfilled" && !osmRes.value.ok)) {
+          setTrailsError("Failed to load OSM trails.");
+        }
+
+        let usfsItems: TrailItem[] = [];
+        if (usfsRes.status === "fulfilled" && usfsRes.value.ok) {
+          const json = await usfsRes.value.json();
+          usfsItems = json.items ?? [];
+          // Pre-load USFS geometries into a map for instant line display on click
+          const lineMap = new Map<string, TrailLine>();
+          for (const ln of (json.lines ?? []) as TrailLine[]) {
+            lineMap.set(ln.id, ln);
+          }
+          setUsfsLines(lineMap);
+        }
+        // USFS failure is best-effort — silently skip
+
+        setTrailItems([...osmItems, ...usfsItems]);
       } catch (e: any) {
         setTrailsError(e?.message ?? "Failed to load trails.");
         setTrailItems([]);
@@ -186,15 +211,28 @@ export default function Page() {
   }, [canFetch, lat, lon, mode]);
 
   async function loadLinesFor(
-    refType: "relation" | "way",
-    id: number,
+    refType: "relation" | "way" | "usfs",
+    id: number | string,
     label: string
   ) {
     if (!canFetch) return;
 
-    setSelectedTrailBusy(true);
-    setSelectedTrailError(null);
     setSelectedTrailLabel(label);
+    setSelectedTrailError(null);
+
+    // USFS trails have pre-loaded geometry — no API call needed
+    if (refType === "usfs") {
+      const usfsId = String(id);
+      const preloaded = usfsLines.get(usfsId);
+      if (preloaded) {
+        setSelectedTrailLines([preloaded]);
+      } else {
+        setSelectedTrailLines([]);
+      }
+      return;
+    }
+
+    setSelectedTrailBusy(true);
 
     try {
       const res = await fetch(

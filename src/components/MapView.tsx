@@ -93,7 +93,7 @@ export default function MapView(props: {
   trailItems?: TrailItem[];
   trailLines?: TrailLine[];
   surfSpots?: SurfSpotMarker[];
-  onLoadTrailLine?: (refType: "relation" | "way", id: number, label: string) => void;
+  onLoadTrailLine?: (refType: "relation" | "way" | "usfs", id: number | string, label: string) => void;
   onViewForecast?: (name: string, transectId: string) => void;
 }) {
   const {
@@ -246,41 +246,78 @@ export default function MapView(props: {
 
         {/* Hiking markers (trailheads/routes) */}
         {trailItems.map((t) => (
-	  <Marker key={t.id} position={[t.lat, t.lon]}>
-	    <Popup>
-	      <div style={{ fontWeight: 700 }}>{t.name}</div>
-	      <div style={{ fontSize: 12, color: "#555" }}>
-		{t.itemType}
-		{t.difficulty ? ` · ${t.difficulty}` : ""}
-		{t.surface ? ` · ${t.surface}` : ""}
-		{t.symbol ? ` · ${t.symbol}` : ""}
-	      </div>
+          <Marker key={t.id} position={[t.lat, t.lon]}>
+            <Popup>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700 }}>{t.name}</span>
+                {t.source === "usfs" ? (
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#1a6b2e", color: "white" }}>
+                    USFS
+                  </span>
+                ) : t.source === "osm" ? (
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#4a90d9", color: "white" }}>
+                    OSM
+                  </span>
+                ) : null}
+              </div>
 
-	      {t.osmUrl ? (
-		<a href={t.osmUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: "inline-block", marginTop: 6 }}>
-		  View on OpenStreetMap
-		</a>
-	      ) : null}
+              <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>
+                {t.itemType}
+                {t.difficulty ? ` · ${t.difficulty}` : ""}
+                {t.surface ? ` · ${t.surface}` : ""}
+                {t.symbol ? ` · ${t.symbol}` : ""}
+              </div>
 
-	      {t.refType && t.refId && (t.refType === "relation" || t.refType === "way") ? (
-		<button
-		  onClick={() => props.onLoadTrailLine?.(t.refType as "relation" | "way", t.refId!, t.name)}
-		  style={{
-		    marginTop: 8,
-		    padding: "6px 8px",
-		    borderRadius: 10,
-		    border: "1px solid #ddd",
-		    background: "white",
-		    cursor: "pointer",
-		    fontSize: 12,
-		  }}
-		>
-		  Load trail line
-		</button>
-	      ) : null}
-	    </Popup>
-	  </Marker>
-	))}
+              {(typeof t.miles === "number" || typeof t.trailClass === "number") ? (
+                <div style={{ fontSize: 12, color: "#444", marginTop: 3 }}>
+                  {typeof t.miles === "number" ? `${t.miles.toFixed(1)} mi` : ""}
+                  {typeof t.miles === "number" && typeof t.trailClass === "number" ? " · " : ""}
+                  {typeof t.trailClass === "number" ? `Class ${t.trailClass}` : ""}
+                </div>
+              ) : null}
+
+              {t.osmUrl ? (
+                <a href={t.osmUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: "inline-block", marginTop: 6 }}>
+                  View on OpenStreetMap
+                </a>
+              ) : null}
+
+              {t.source === "usfs" ? (
+                <button
+                  onClick={() => props.onLoadTrailLine?.("usfs", t.id, t.name)}
+                  style={{
+                    marginTop: 8,
+                    padding: "6px 8px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: "white",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    display: "block",
+                  }}
+                >
+                  Show trail line
+                </button>
+              ) : t.refType && t.refId && (t.refType === "relation" || t.refType === "way") ? (
+                <button
+                  onClick={() => props.onLoadTrailLine?.(t.refType as "relation" | "way", t.refId!, t.name)}
+                  style={{
+                    marginTop: 8,
+                    padding: "6px 8px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: "white",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    display: "block",
+                  }}
+                >
+                  Load trail line
+                </button>
+              ) : null}
+            </Popup>
+          </Marker>
+        ))}
 	</MapContainer>
     </div>
   );
