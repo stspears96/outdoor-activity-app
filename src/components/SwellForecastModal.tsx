@@ -5,6 +5,7 @@ import {
   ComposedChart,
   Area,
   Bar,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -24,9 +25,10 @@ type CdipPoint = {
 type ChartRow = {
   time: number; // epoch ms
   label: string; // formatted time
-  hs: number | null; // swell height (ft)
-  tp: number | null; // peak period (s)
-  dp: number | null; // peak direction (deg)
+  nowcastHs: number | null; // observed swell height (ft)
+  forecastHs: number | null; // forecast swell height (ft)
+  tp: number | null; // peak period (s) — nowcast only
+  dp: number | null; // peak direction (deg) — nowcast only
 };
 
 function formatTime(epoch: number): string {
@@ -37,42 +39,6 @@ function formatTime(epoch: number): string {
     minute: "2-digit",
   });
   return `${day} ${hour}`;
-}
-
-/** Small arrow glyph rotated to indicate swell direction */
-function DirectionTick(props: {
-  x?: number;
-  y?: number;
-  payload?: { value: number };
-  data: ChartRow[];
-}) {
-  const { x, y, payload, data } = props;
-  if (x == null || y == null || !payload) return null;
-
-  const row = data.find((r) => r.time === payload.value);
-  if (!row || row.dp == null) return null;
-
-  // CSS rotation: 0deg = up/north, clockwise
-  const rotation = row.dp;
-
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <text
-        x={0}
-        y={0}
-        textAnchor="middle"
-        dominantBaseline="central"
-        style={{
-          fontSize: 12,
-          fill: "#06c",
-          transformOrigin: "center",
-          transform: `rotate(${rotation}deg)`,
-        }}
-      >
-        ↓
-      </text>
-    </g>
-  );
 }
 
 export default function SwellForecastModal(props: {
@@ -93,34 +59,70 @@ export default function SwellForecastModal(props: {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(
-          `/api/cdip/alongshore?transect=${encodeURIComponent(transectId)}&hours=72`
-        );
-        if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-        const json = await res.json();
-        const points: CdipPoint[] = json.points ?? [];
+        const [nowcastRes, forecastRes] = await Promise.all([
+          fetch(`/api/cdip/alongshore?transect=${encodeURIComponent(transectId)}&hours=72`),
+          fetch(`/api/cdip/forecast?transect=${encodeURIComponent(transectId)}`),
+        ]);
+
+        if (!nowcastRes.ok) throw new Error(`Nowcast request failed: ${nowcastRes.status}`);
+
+        const nowcastJson = await nowcastRes.json();
+        const nowcastPoints: CdipPoint[] = nowcastJson.points ?? [];
+
+        // Forecast is best-effort — don't fail if unavailable
+        let forecastPoints: CdipPoint[] = [];
+        if (forecastRes.ok) {
+          const forecastJson = await forecastRes.json();
+          forecastPoints = forecastJson.points ?? [];
+        }
 
         if (cancelled) return;
 
-        const rows: ChartRow[] = points
-          .map((p) => {
-            const t = Date.parse(p.time);
-            if (!Number.isFinite(t)) return null;
-            return {
+        // Build a time-keyed map from nowcast data
+        const timeMap = new Map<number, ChartRow>();
+
+        for (const p of nowcastPoints) {
+          const t = Date.parse(p.time);
+          if (!Number.isFinite(t)) continue;
+          timeMap.set(t, {
+            time: t,
+            label: formatTime(t),
+            nowcastHs: p.waveHs != null ? p.waveHs * 3.281 : null,
+            forecastHs: null,
+            tp: p.waveTp,
+            dp: p.waveDp,
+          });
+        }
+
+        // Merge forecast data into the map
+        for (const p of forecastPoints) {
+          const t = Date.parse(p.time);
+          if (!Number.isFinite(t)) continue;
+          const existing = timeMap.get(t);
+          const forecastHsFt = p.waveHs != null ? p.waveHs * 3.281 : null;
+          if (existing) {
+            existing.forecastHs = forecastHsFt;
+          } else {
+            timeMap.set(t, {
               time: t,
               label: formatTime(t),
-              hs: p.waveHs != null ? p.waveHs * 3.281 : null,
-              tp: p.waveTp,
-              dp: p.waveDp,
-            };
-          })
-          .filter((r): r is ChartRow => r !== null)
-          .sort((a, b) => a.time - b.time);
+              nowcastHs: null,
+              forecastHs: forecastHsFt,
+              tp: null,
+              dp: null,
+            });
+          }
+        }
 
-        // Trim to most recent 72 hours
+        const rows = Array.from(timeMap.values()).sort((a, b) => a.time - b.time);
+
+        // Trim: keep from (newest nowcast - 72h) through end of forecast
         if (rows.length > 0) {
-          const newest = rows[rows.length - 1].time;
-          const cutoff = newest - 72 * 3600 * 1000;
+          const newestNowcast = nowcastPoints.reduce((mx, p) => {
+            const t = Date.parse(p.time);
+            return Number.isFinite(t) ? Math.max(mx, t) : mx;
+          }, -Infinity);
+          const cutoff = newestNowcast - 72 * 3600 * 1000;
           const trimmed = rows.filter((r) => r.time >= cutoff);
           setData(trimmed);
         } else {
@@ -154,7 +156,6 @@ export default function SwellForecastModal(props: {
 
   // Downsample tick labels so they don't overlap
   function timeTick(rows: ChartRow[]) {
-    // Show roughly 8-12 labels
     const step = Math.max(1, Math.floor(rows.length / 10));
     return rows.filter((_, i) => i % step === 0).map((r) => r.time);
   }
@@ -209,7 +210,7 @@ export default function SwellForecastModal(props: {
           Swell Forecast: {name}
         </h2>
         <div style={{ fontSize: 12, color: "#666", marginBottom: 16 }}>
-          CDIP transect {transectId} · 72-hour window
+          CDIP transect {transectId} · Observed + Forecast
         </div>
 
         {loading && (
@@ -240,7 +241,7 @@ export default function SwellForecastModal(props: {
 
         {!loading && !error && data && data.length > 0 && (
           <>
-            {/* Direction indicator strip */}
+            {/* Direction indicator strip — nowcast only */}
             <div
               style={{
                 display: "flex",
@@ -334,7 +335,9 @@ export default function SwellForecastModal(props: {
                   labelFormatter={(v) => formatTime(Number(v))}
                   formatter={(value, name) => {
                     const v = Number(value);
-                    if (name === "Height (ft)")
+                    if (name === "Observed Hs (ft)")
+                      return [v.toFixed(1) + " ft", name];
+                    if (name === "Forecast Hs (ft)")
                       return [v.toFixed(1) + " ft", name];
                     if (name === "Period (s)")
                       return [v.toFixed(1) + " s", name];
@@ -345,11 +348,22 @@ export default function SwellForecastModal(props: {
                 <Area
                   yAxisId="hs"
                   type="monotone"
-                  dataKey="hs"
-                  name="Height (ft)"
+                  dataKey="nowcastHs"
+                  name="Observed Hs (ft)"
                   stroke="#0077cc"
                   fill="#0077cc22"
                   strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+                <Line
+                  yAxisId="hs"
+                  type="monotone"
+                  dataKey="forecastHs"
+                  name="Forecast Hs (ft)"
+                  stroke="#e05530"
+                  strokeWidth={2}
+                  strokeDasharray="6 3"
                   dot={false}
                   connectNulls
                 />
