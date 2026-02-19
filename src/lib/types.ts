@@ -73,9 +73,11 @@ export type TrailItem = {
   symbol?: string;
   ref?: string;
   osmUrl?: string;
-  source?: "osm" | "usfs";
+  source?: "osm" | "usfs" | "outbound";
   miles?: number;
   trailClass?: number;
+  elevationFt?: number;
+  outboundUrl?: string;
 };
 
 export type TrailLine = {

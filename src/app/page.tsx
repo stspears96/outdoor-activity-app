@@ -25,6 +25,7 @@ export default function Page() {
 
   // Map mode: either show generic places (parks/cafes/etc.) or hiking markers
   const [mode, setMode] = useState<"places" | "trails" | "surf">("places");
+  const [trailActivityType, setTrailActivityType] = useState<"hike" | "run">("hike");
 
   // ----- Places (OSM Overpass /api/places) -----
   const [selectedPlaceType, setSelectedPlaceType] = useState<PlaceType>("park");
@@ -158,7 +159,7 @@ export default function Page() {
   }, [canFetch, mode, lat, lon]);
 
 
-  // Fetch trail markers when in "trails" mode (OSM + USFS in parallel)
+  // Fetch trail markers when in "trails" mode (OSM + USFS + Outbound for hike; Outbound only for run)
   useEffect(() => {
     async function fetchTrails() {
       if (!canFetch || mode !== "trails") return;
@@ -172,33 +173,48 @@ export default function Page() {
       setUsfsLines(new Map());
 
       try {
-        const [osmRes, usfsRes] = await Promise.allSettled([
-          fetch(`/api/trails?lat=${lat}&lon=${lon}&radiusMiles=${trailsRadiusMiles}&limitItems=180`),
-          fetch(`/api/trails-usfs?lat=${lat}&lon=${lon}&radiusMiles=30`),
-        ]);
+        if (trailActivityType === "run") {
+          const dbRes = await fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=running&radiusKm=40`);
+          if (!dbRes.ok) throw new Error(`Running spots request failed: ${dbRes.status}`);
+          const json = await dbRes.json();
+          setTrailItems(json.items ?? []);
+        } else {
+          const [osmRes, usfsRes, dbRes] = await Promise.allSettled([
+            fetch(`/api/trails?lat=${lat}&lon=${lon}&radiusMiles=${trailsRadiusMiles}&limitItems=180`),
+            fetch(`/api/trails-usfs?lat=${lat}&lon=${lon}&radiusMiles=30`),
+            fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=hiking&radiusKm=40`),
+          ]);
 
-        let osmItems: TrailItem[] = [];
-        if (osmRes.status === "fulfilled" && osmRes.value.ok) {
-          const json = await osmRes.value.json();
-          osmItems = json.items ?? [];
-        } else if (osmRes.status === "rejected" || (osmRes.status === "fulfilled" && !osmRes.value.ok)) {
-          setTrailsError("Failed to load OSM trails.");
-        }
-
-        let usfsItems: TrailItem[] = [];
-        if (usfsRes.status === "fulfilled" && usfsRes.value.ok) {
-          const json = await usfsRes.value.json();
-          usfsItems = json.items ?? [];
-          // Pre-load USFS geometries into a map for instant line display on click
-          const lineMap = new Map<string, TrailLine>();
-          for (const ln of (json.lines ?? []) as TrailLine[]) {
-            lineMap.set(ln.id, ln);
+          let osmItems: TrailItem[] = [];
+          if (osmRes.status === "fulfilled" && osmRes.value.ok) {
+            const json = await osmRes.value.json();
+            osmItems = json.items ?? [];
+          } else if (osmRes.status === "rejected" || (osmRes.status === "fulfilled" && !osmRes.value.ok)) {
+            setTrailsError("Failed to load OSM trails.");
           }
-          setUsfsLines(lineMap);
-        }
-        // USFS failure is best-effort — silently skip
 
-        setTrailItems([...osmItems, ...usfsItems]);
+          let usfsItems: TrailItem[] = [];
+          if (usfsRes.status === "fulfilled" && usfsRes.value.ok) {
+            const json = await usfsRes.value.json();
+            usfsItems = json.items ?? [];
+            // Pre-load USFS geometries into a map for instant line display on click
+            const lineMap = new Map<string, TrailLine>();
+            for (const ln of (json.lines ?? []) as TrailLine[]) {
+              lineMap.set(ln.id, ln);
+            }
+            setUsfsLines(lineMap);
+          }
+          // USFS failure is best-effort — silently skip
+
+          let dbItems: TrailItem[] = [];
+          if (dbRes.status === "fulfilled" && dbRes.value.ok) {
+            const json = await dbRes.value.json();
+            dbItems = json.items ?? [];
+          }
+          // Outbound failure is best-effort — silently skip
+
+          setTrailItems([...osmItems, ...usfsItems, ...dbItems]);
+        }
       } catch (e: any) {
         setTrailsError(e?.message ?? "Failed to load trails.");
         setTrailItems([]);
@@ -208,7 +224,7 @@ export default function Page() {
     }
 
     fetchTrails();
-  }, [canFetch, lat, lon, mode]);
+  }, [canFetch, lat, lon, mode, trailActivityType]);
 
   async function loadLinesFor(
     refType: "relation" | "way" | "usfs",
@@ -251,7 +267,9 @@ export default function Page() {
 
   const mapSubtitle =
     mode === "trails"
-      ? `Hiking: click a trail marker, then "Load trail line" (within ${trailsRadiusMiles} mi)`
+      ? trailActivityType === "run"
+        ? "Running spots: click a marker for details"
+        : `Hiking: click a trail marker, then "Load trail line" (within ${trailsRadiusMiles} mi)`
       : `Places: ${selectedPlaceType} (within ${radiusMiles} mi)`;
 
   return (
@@ -419,6 +437,13 @@ export default function Page() {
                 key={a.id}
                 onClick={() => {
 		  if (a.id === "hike") {
+		    setTrailActivityType("hike");
+		    setMode("trails");
+		    return;
+		  }
+
+		  if (a.id === "run") {
+		    setTrailActivityType("run");
 		    setMode("trails");
 		    return;
 		  }

@@ -258,6 +258,10 @@ export default function MapView(props: {
                   <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#4a90d9", color: "white" }}>
                     OSM
                   </span>
+                ) : t.source === "outbound" ? (
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#e07b2a", color: "white" }}>
+                    Outbound
+                  </span>
                 ) : null}
               </div>
 
@@ -268,21 +272,27 @@ export default function MapView(props: {
                 {t.symbol ? ` · ${t.symbol}` : ""}
               </div>
 
-              {(typeof t.miles === "number" || typeof t.trailClass === "number") ? (
+              {(typeof t.miles === "number" || typeof t.trailClass === "number" || typeof t.elevationFt === "number") ? (
                 <div style={{ fontSize: 12, color: "#444", marginTop: 3 }}>
                   {typeof t.miles === "number" ? `${t.miles.toFixed(1)} mi` : ""}
-                  {typeof t.miles === "number" && typeof t.trailClass === "number" ? " · " : ""}
+                  {typeof t.miles === "number" && (typeof t.trailClass === "number" || typeof t.elevationFt === "number") ? " · " : ""}
                   {typeof t.trailClass === "number" ? `Class ${t.trailClass}` : ""}
+                  {typeof t.trailClass === "number" && typeof t.elevationFt === "number" ? " · " : ""}
+                  {typeof t.elevationFt === "number" ? `+${t.elevationFt.toLocaleString()} ft` : ""}
                 </div>
               ) : null}
 
-              {t.osmUrl ? (
+              {t.source === "outbound" && t.outboundUrl ? (
+                <a href={t.outboundUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: "inline-block", marginTop: 6 }}>
+                  View on The Outbound
+                </a>
+              ) : t.osmUrl ? (
                 <a href={t.osmUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: "inline-block", marginTop: 6 }}>
                   View on OpenStreetMap
                 </a>
               ) : null}
 
-              {t.source === "usfs" ? (
+              {t.source !== "outbound" && t.source === "usfs" ? (
                 <button
                   onClick={() => props.onLoadTrailLine?.("usfs", t.id, t.name)}
                   style={{
@@ -298,7 +308,7 @@ export default function MapView(props: {
                 >
                   Show trail line
                 </button>
-              ) : t.refType && t.refId && (t.refType === "relation" || t.refType === "way") ? (
+              ) : t.source !== "outbound" && t.refType && t.refId && (t.refType === "relation" || t.refType === "way") ? (
                 <button
                   onClick={() => props.onLoadTrailLine?.(t.refType as "relation" | "way", t.refId!, t.name)}
                   style={{
