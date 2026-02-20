@@ -35,6 +35,27 @@ function msToKnots(ms: number) {
   return ms * 1.943844;
 }
 
+// 16-point cardinal label for a bearing
+const CARDINAL_16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+function toCardinal(deg: number): string {
+  const i = Math.round(((deg % 360) + 360) % 360 / 22.5) % 16;
+  return CARDINAL_16[i];
+}
+
+// Midpoint of an angular window (handles wrap-around)
+function circularCenter(minDeg: number, maxDeg: number): number {
+  const toR = (d: number) => (d * Math.PI) / 180;
+  const sinMean = (Math.sin(toR(minDeg)) + Math.sin(toR(maxDeg))) / 2;
+  const cosMean = (Math.cos(toR(minDeg)) + Math.cos(toR(maxDeg))) / 2;
+  return ((Math.atan2(sinMean, cosMean) * 180) / Math.PI + 360) % 360;
+}
+
+// Shortest angular distance between two bearings (0–180°)
+function angularDist(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
 type ScoredSpot = {
   id: string;
   name: string;
@@ -125,104 +146,89 @@ async function fetchMarineForSpots(spots: ScoredSpot[]) {
 
 function scoreSpot(spot: ScoredSpot): { score: number; quality: ScoredSpot["quality"]; reasons: string[] } {
   const reasons: string[] = [];
-  let score = 50; // neutral baseline
+  let score = 50;
 
   const c = spot.conditions ?? {};
   const windDir = c.windDirDeg;
   const windKts = c.windSpeedKts;
 
-  // Prefer swell vars, fall back to wave vars
+  // Prefer dedicated swell vars; fall back to combined wave vars
   const swellDir = c.swellDirDeg ?? c.waveDirDeg;
-  const swellH = c.swellHeightM ?? c.waveHeightM;
-  const swellP = c.swellPeriodS ?? c.wavePeriodS;
+  const swellH   = c.swellHeightM ?? c.waveHeightM;
+  const swellP   = c.swellPeriodS ?? c.wavePeriodS;
 
-  // ---- Wind scoring ----
+  // ── Wind direction — continuous score relative to offshore window center ──
   if (typeof windDir === "number" && spot.wind_offshore_min_deg != null && spot.wind_offshore_max_deg != null) {
-    const off = inDegWindow(windDir, spot.wind_offshore_min_deg, spot.wind_offshore_max_deg);
-    if (off) {
-      score += 18;
-      reasons.push("Offshore wind direction ✅");
-    } else {
-      score -= 12;
-      reasons.push("Wind not offshore ⚠️");
-    }
+    const offCenter = circularCenter(spot.wind_offshore_min_deg, spot.wind_offshore_max_deg);
+    const dist = angularDist(windDir, offCenter);
+    // cos mapping: 0° (dead offshore) → +20, 90° (sideshore) → 0, 180° (onshore) → -20
+    const pts = Math.round(Math.cos((dist * Math.PI) / 180) * 20);
+    score += pts;
+
+    const label =
+      dist <= 30  ? "offshore" :
+      dist <= 70  ? "side-offshore" :
+      dist <= 110 ? "sideshore" :
+      dist <= 150 ? "side-onshore" :
+                    "onshore";
+    const icon = pts >= 12 ? "✅" : pts >= 0 ? "" : pts >= -10 ? "⚠️" : "❌";
+    reasons.push(`Wind ${toCardinal(windDir)} — ${label} (${Math.round(dist)}° from offshore) ${icon}`);
   } else if (typeof windDir === "number") {
-    reasons.push("Wind direction available (no offshore window set)");
+    reasons.push(`Wind ${toCardinal(windDir)} (${Math.round(windDir)}°, no offshore window)`);
   }
 
+  // ── Wind speed ────────────────────────────────────────────────────────────
   if (typeof windKts === "number") {
-    if (windKts <= 8) {
-      score += 10;
-      reasons.push("Light wind ✅");
-    } else if (windKts <= 14) {
-      score += 4;
-      reasons.push("Moderate wind");
-    } else if (windKts <= 20) {
-      score -= 6;
-      reasons.push("Breezy ⚠️");
-    } else {
-      score -= 14;
-      reasons.push("Very windy ❌");
-    }
+    if (windKts <= 5)       { score += 12; reasons.push(`${windKts.toFixed(0)} kts — light ✅`); }
+    else if (windKts <= 10) { score += 6;  reasons.push(`${windKts.toFixed(0)} kts — moderate`); }
+    else if (windKts <= 15) { score += 1;  reasons.push(`${windKts.toFixed(0)} kts — breezy`); }
+    else if (windKts <= 20) { score -= 8;  reasons.push(`${windKts.toFixed(0)} kts — windy ⚠️`); }
+    else                    { score -= 16; reasons.push(`${windKts.toFixed(0)} kts — very windy ❌`); }
   }
 
-  // ---- Swell direction scoring ----
-  if (
-    typeof swellDir === "number" &&
-    spot.swell_min_deg != null &&
-    spot.swell_max_deg != null
-  ) {
-    const inWindow = inDegWindow(swellDir, spot.swell_min_deg, spot.swell_max_deg);
-    if (inWindow) {
-      score += 16;
-      reasons.push("Swell direction in window ✅");
-    } else {
-      score -= 8;
-      reasons.push("Swell direction not ideal ⚠️");
-    }
-  } else if (typeof swellDir === "number") {
-    reasons.push("Swell direction available (no window set)");
-  }
+  // ── Swell: height + period + direction — one combined reason ─────────────
+  if (typeof swellH === "number" || typeof swellP === "number" || typeof swellDir === "number") {
+    const parts: string[] = [];
 
-  // ---- Swell height scoring (very rough, beginner-friendly default) ----
-  if (typeof swellH === "number") {
-    // meters → simple buckets
-    if (swellH < 0.5) {
-      score -= 10;
-      reasons.push("Small surf ❌");
-    } else if (swellH < 1.2) {
-      score += 6;
-      reasons.push("Playable size ✅");
-    } else if (swellH < 2.2) {
-      score += 10;
-      reasons.push("Solid size ✅");
-    } else {
-      score -= 4;
-      reasons.push("Very large (could be heavy) ⚠️");
+    // Height
+    if (typeof swellH === "number") {
+      if (swellH < 0.5)       { score -= 10; parts.push(`${swellH.toFixed(1)}m (flat)`); }
+      else if (swellH < 1.2)  { score += 6;  parts.push(`${swellH.toFixed(1)}m`); }
+      else if (swellH < 2.2)  { score += 10; parts.push(`${swellH.toFixed(1)}m`); }
+      else                    { score -= 4;  parts.push(`${swellH.toFixed(1)}m (large)`); }
     }
-  }
 
-  // ---- Period scoring ----
-  if (typeof swellP === "number") {
-    if (swellP >= 14) {
-      score += 12;
-      reasons.push("Long period ✅");
-    } else if (swellP >= 11) {
-      score += 8;
-      reasons.push("Good period ✅");
-    } else if (swellP >= 8) {
-      score += 3;
-      reasons.push("Shorter period");
-    } else {
-      score -= 6;
-      reasons.push("Weak/short period ❌");
+    // Period
+    if (typeof swellP === "number") {
+      if (swellP >= 14)      { score += 12; parts.push(`${swellP.toFixed(0)}s`); }
+      else if (swellP >= 11) { score += 8;  parts.push(`${swellP.toFixed(0)}s`); }
+      else if (swellP >= 8)  { score += 3;  parts.push(`${swellP.toFixed(0)}s`); }
+      else                   { score -= 6;  parts.push(`${swellP.toFixed(0)}s (short)`); }
     }
+
+    // Direction
+    if (typeof swellDir === "number") {
+      const dir = `${toCardinal(swellDir)} (${Math.round(swellDir)}°)`;
+      if (spot.swell_min_deg != null && spot.swell_max_deg != null) {
+        if (inDegWindow(swellDir, spot.swell_min_deg, spot.swell_max_deg)) {
+          score += 16;
+          parts.push(`from ${dir} ✅`);
+        } else {
+          score -= 8;
+          parts.push(`from ${dir} ⚠️`);
+        }
+      } else {
+        parts.push(`from ${dir}`);
+      }
+    }
+
+    reasons.push(`Swell: ${parts.join(", ")}`);
   }
 
   score = clamp(Math.round(score), 0, 100);
 
   let quality: ScoredSpot["quality"] = "poor";
-  if (score >= 78) quality = "excellent";
+  if (score >= 78)      quality = "excellent";
   else if (score >= 60) quality = "good";
   else if (score >= 42) quality = "fair";
 

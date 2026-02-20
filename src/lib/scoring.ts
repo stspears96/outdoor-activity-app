@@ -1,4 +1,5 @@
 import type { ActivityId, ActivityScore, WeatherResponse } from "./types";
+import { ACTIVITY_CATALOG } from "./activities";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -53,11 +54,13 @@ function precipToPenalty(p: number) {
   return clamp(1 - (p - 10) / 60, 0, 1);
 }
 
-function computeActivityScore(
+export function computeActivityScore(
   id: ActivityId,
   name: string,
   weather: WeatherResponse,
-  windowHours: number
+  windowHours: number,
+  sunrise?: string,
+  sunset?: string,
 ): ActivityScore {
   const idxs = pickHourIndices(weather, windowHours);
 
@@ -66,15 +69,15 @@ function computeActivityScore(
   const windMph = max(idxs.map(i => weather.hourly.windspeed_10m?.[i]));
 
   // Default preferences by activity
-  const prefs: Record<ActivityId, { temp: [number, number, number, number]; wind: [number, number]; precipWeight: number; windWeight: number; tempWeight: number }> = {
-    walk:   { temp: [45, 55, 75, 90], wind: [18, 28], precipWeight: 0.45, windWeight: 0.20, tempWeight: 0.35 },
-    run:    { temp: [40, 50, 70, 85], wind: [15, 25], precipWeight: 0.40, windWeight: 0.25, tempWeight: 0.35 },
-    hike:   { temp: [40, 55, 75, 90], wind: [18, 30], precipWeight: 0.50, windWeight: 0.15, tempWeight: 0.35 },
-    bike:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.45, windWeight: 0.30, tempWeight: 0.25 },
-    mtb:    { temp: [40, 55, 75, 88], wind: [15, 25], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25 },
-    picnic: { temp: [50, 60, 78, 92], wind: [10, 20], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25 },
-    cafe:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.55, windWeight: 0.15, tempWeight: 0.30 },
-    surf:{ temp: [45, 55, 75, 90], wind: [18, 30], precipWeight: 0.45, windWeight: 0.15, tempWeight: 0.40 },
+  const prefs: Record<ActivityId, { temp: [number, number, number, number]; wind: [number, number]; precipWeight: number; windWeight: number; tempWeight: number; daytime: boolean }> = {
+    walk:   { temp: [45, 55, 75, 90], wind: [18, 28], precipWeight: 0.45, windWeight: 0.20, tempWeight: 0.35, daytime: false },
+    run:    { temp: [40, 50, 70, 85], wind: [15, 25], precipWeight: 0.40, windWeight: 0.25, tempWeight: 0.35, daytime: true },
+    hike:   { temp: [40, 55, 75, 90], wind: [18, 30], precipWeight: 0.50, windWeight: 0.15, tempWeight: 0.35, daytime: true },
+    bike:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.45, windWeight: 0.30, tempWeight: 0.25, daytime: true },
+    mtb:    { temp: [40, 55, 75, 88], wind: [15, 25], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25, daytime: true },
+    picnic: { temp: [50, 60, 78, 92], wind: [10, 20], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25, daytime: true },
+    cafe:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.55, windWeight: 0.15, tempWeight: 0.30, daytime: false },
+    surf:   { temp: [45, 55, 75, 90], wind: [18, 30], precipWeight: 0.45, windWeight: 0.15, tempWeight: 0.40, daytime: true },
   };
 
   const p = prefs[id];
@@ -91,12 +94,10 @@ function computeActivityScore(
     ? precipToPenalty(precipProb)
     : 0.7;
 
-  const score01 =
+  let score01 =
     p.tempWeight * tempComponent +
     p.windWeight * windComponent +
     p.precipWeight * precipComponent;
-
-  const score = Math.round(clamp(score01, 0, 1) * 100);
 
   const why: string[] = [];
   if (typeof precipProb === "number") why.push(`Max rain chance ~${Math.round(precipProb)}% in the next ${windowHours}h`);
@@ -123,6 +124,18 @@ function computeActivityScore(
     }
   }
 
+  if (p.daytime && bestHourISO && sunrise && sunset) {
+    const bestHour = new Date(bestHourISO).getTime();
+    const sunriseTime = new Date(sunrise).getTime();
+    const sunsetTime = new Date(sunset).getTime();
+    if (bestHour < sunriseTime || bestHour > sunsetTime) {
+      score01 *= 0.1; // Heavy penalty for being at night
+      why.push("Activity is best during the day, but best hour is at night");
+    }
+  }
+
+  const score = Math.round(clamp(score01, 0, 1) * 100);
+
   // Little nudge so UI doesn't look too uniform
   const variance = (id.charCodeAt(0) % 7) / 200; // 0..0.03
   const finalScore = Math.round(clamp(lerp(score, score + score * variance, 1), 0, 100));
@@ -131,21 +144,9 @@ function computeActivityScore(
 }
 
 export function scoreActivities(weather: WeatherResponse, windowHours: number) {
-  const catalog: Array<{ id: ActivityId; name: string }> = [
-    { id: "walk", name: "Walk" },
-    { id: "run", name: "Run" },
-    { id: "hike", name: "Hike" },
-    { id: "bike", name: "Bike" },
-    { id: "mtb", name: "Mountain Bike" },
-    { id: "picnic", name: "Picnic" },
-    { id: "cafe", name: "Outdoor café" },
-    { id: "surf", name: "Surf" },
-  ];
-
-  const activities = catalog
-    .map(a => computeActivityScore(a.id, a.name, weather, windowHours))
+  const activities = ACTIVITY_CATALOG
+    .map(a => computeActivityScore(a.id, a.name, weather, windowHours, undefined, undefined))
     .sort((a, b) => b.score - a.score);
 
   return activities;
 }
-

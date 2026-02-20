@@ -40,7 +40,7 @@ export async function GET(req: Request) {
 
   const lat = Number(searchParams.get("lat"));
   const lon = Number(searchParams.get("lon"));
-  const activityType = searchParams.get("activityType") ?? "hiking";
+  const activityType = searchParams.get("activityType");
   const radiusKm = Number(searchParams.get("radiusKm") ?? "40");
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -50,30 +50,27 @@ export async function GET(req: Request) {
   const latDelta = radiusKm / 111;
   const lonDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
 
-  const activityLike =
-    activityType === "running" ? "%Running%" :
-    activityType === "mtb" ? "%Mountain Biking%" :
-    "%Hiking%";
-
   const db = new Database(DB_PATH, { readonly: true });
-  const rows = db
-    .prepare(
-      `
-      SELECT id, title, latitude, longitude, rating, tags, url, gpx_track_id
-      FROM activities
-      WHERE latitude BETWEEN ? AND ?
-        AND longitude BETWEEN ? AND ?
-        AND activities LIKE ?
-        AND rating != '[0, 0]'
-      `
-    )
-    .all(
-      lat - latDelta,
-      lat + latDelta,
-      lon - lonDelta,
-      lon + lonDelta,
-      activityLike
-    ) as Array<{
+
+  let sql = `
+    SELECT id, title, latitude, longitude, rating, tags, url, gpx_track_id, activities
+    FROM activities
+    WHERE latitude BETWEEN ? AND ?
+      AND longitude BETWEEN ? AND ?
+      AND rating != '[0, 0]'
+  `;
+  const params: (string | number)[] = [lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta];
+
+  if (activityType) {
+    const activityLike =
+      activityType === "running" ? "%Running%" :
+      activityType === "mtb" ? "%Mountain Biking%" :
+      "%Hiking%";
+    sql += ` AND activities LIKE ?`;
+    params.push(activityLike);
+  }
+
+  const rows = db.prepare(sql).all(params) as Array<{
     id: number;
     title: string;
     latitude: number;
@@ -82,6 +79,7 @@ export async function GET(req: Request) {
     tags: string;
     url: string;
     gpx_track_id: number;
+    activities: string;
   }>;
   db.close();
 
@@ -116,6 +114,7 @@ export async function GET(req: Request) {
       elevationFt: parseElevationFt(tags),
       outboundUrl: row.url,
       gpxTrackId: row.gpx_track_id,
+      activities: row.activities,
       _reviewCount: reviewCount,
       _stars: stars,
     });

@@ -39,6 +39,7 @@ export type MapViewProps = {
   trailLines?: TrailLine[];
   surfSpots: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way" | "usfs", id: number | string, label: string) => void;
+  onLoadGpxTrack?: (trackId: number, label: string) => void;
   onViewForecast?: (name: string, transectId: string) => void;
 };
 

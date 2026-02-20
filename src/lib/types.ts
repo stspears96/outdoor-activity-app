@@ -14,6 +14,8 @@ export type ActivityScore = {
   score: number; // 0-100
   why: string[];
   bestHourISO?: string; // e.g. 2026-02-07T18:00
+  lat?: number;
+  lon?: number;
 };
 
 export type WeatherHourly = {
@@ -45,6 +47,13 @@ export type Conditions = {
   precipType: "none" | "drizzle" | "rain" | "snow" | "freezing_rain";
   precipIntensityMmh: number; // mm/h (max over window)
   visibilityKm: number;      // km (min over window)
+  sunrise?: string;          // ISO string
+  sunset?: string;           // ISO string
+  timeISO?: string;          // ISO string for the specific hour
+  // Surf-specific (optional — only present when rating a surf spot)
+  swellHeightM?: number;         // metres
+  swellPeriodS?: number;         // seconds
+  windOffshoreAngleDeg?: number; // degrees from offshore window centre (0 = dead offshore)
 };
 
 export type WeatherResponse = {
@@ -52,6 +61,10 @@ export type WeatherResponse = {
   longitude: number;
   timezone: string;
   hourly: WeatherHourly;
+  daily: {
+    sunrise: string[];
+    sunset: string[];
+  };
 };
 
 export type RecommendationsResponse = {
@@ -101,6 +114,7 @@ export type TrailItem = {
   elevationFt?: number;
   outboundUrl?: string;
   gpxTrackId?: number;
+  activities?: string;
 };
 
 export type TrailLine = {

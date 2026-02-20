@@ -9,24 +9,16 @@ import type {
   TrailLine,
   ActivityId,
 } from "@/lib/types";
-import type { LearningState } from "@/lib/learning/types";
+import { ACTIVITY_CATALOG } from "@/lib/activities";
 import { GeoButton } from "@/components/GeoButton";
 import { LocationSearch } from "@/components/LocationSearch";
-import { ActivityCard } from "@/components/ActivityCard";
 import MapViewDynamic from "@/components/MapViewDynamic";
 import SwellForecastModal from "@/components/SwellForecastModal";
-import { FeedbackPrompt } from "@/components/FeedbackPrompt";
 import { LearnedPrefsPanel } from "@/components/LearnedPrefsPanel";
-import {
-  loadState,
-  saveState,
-  defaultState,
-  addObservation,
-  setPendingSession,
-  clearPendingSession,
-  shouldShowFeedback,
-  getBlendedScore,
-} from "@/lib/learning/store";
+import type { LearningState } from "@/lib/learning/types";
+import type { Conditions } from "@/lib/types";
+import { loadState, saveState, addObservation } from "@/lib/learning/store";
+import { circularCenter, angularDist } from "@/lib/learning/buckets";
 
 export default function Page() {
   const [lat, setLat] = useState<number | null>(null);
@@ -40,8 +32,11 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
 
   // Map mode: either show generic places (parks/cafes/etc.) or hiking markers
-  const [mode, setMode] = useState<"places" | "trails" | "surf">("places");
-  const [trailActivityType, setTrailActivityType] = useState<"hike" | "run" | "mtb">("hike");
+  const [mode, setMode] = useState<"places" | "trails" | "surf">("trails");
+  const [activityTypeFilter, setActivityTypeFilter] = useState<string>("all");
+
+  // Map centering state
+  const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
 
   // ----- Places (OSM Overpass /api/places) -----
   const [selectedPlaceType, setSelectedPlaceType] = useState<PlaceType>("park");
@@ -73,44 +68,26 @@ export default function Page() {
   // ---- Swell forecast modal ----
   const [forecastSpot, setForecastSpot] = useState<{ name: string; transectId: string } | null>(null);
 
-  // ─── Learning state ────────────────────────────────────────────────────────
+  // ---- Learning / rating ----
   const [learningState, setLearningState] = useState<LearningState | null>(null);
-  const [showFeedback, setShowFeedback] = useState(false);
   const [showLearnedPrefs, setShowLearnedPrefs] = useState(false);
+  const [rateTarget, setRateTarget] = useState<{
+    activityId: ActivityId;
+    name: string;
+    lat: number;
+    lon: number;
+  } | null>(null);
+  const [rateConditions, setRateConditions] = useState<Conditions | null>(null);
+  const [rateConditionsBusy, setRateConditionsBusy] = useState(false);
+  const [rateValue, setRateValue] = useState(70);
 
-  // Load learning state on mount
-  useEffect(() => {
-    const state = loadState();
-    setLearningState(state);
-    if (shouldShowFeedback(state)) {
-      setShowFeedback(true);
-    }
-  }, []);
+  // Load learning state once on mount
+  useEffect(() => { setLearningState(loadState()); }, []);
 
   const canFetch = useMemo(
     () => typeof lat === "number" && typeof lon === "number",
     [lat, lon]
   );
-
-  function placeTypeForActivity(activityId: string): PlaceType {
-    switch (activityId) {
-      case "picnic":
-        return "park";
-      case "hike":
-        return "trail";
-      case "run":
-        return "trail";
-      case "bike":
-        return "trail";
-      case "cafe":
-        return "cafe";
-      case "surf":
-        return "park"; // unreachable — surf sets mode directly
-      case "walk":
-      default:
-        return "park";
-    }
-  }
 
   const fetchRecs = useCallback(async () => {
     if (!canFetch) return;
@@ -118,39 +95,27 @@ export default function Page() {
     setError(null);
     setData(null);
     try {
-      const res = await fetch(
-        `/api/recommendations?lat=${lat}&lon=${lon}&windowHours=${windowHours}`
-      );
+      let url = `/api/individual-recommendations?lat=${lat}&lon=${lon}&windowHours=${windowHours}`;
+      if (activityTypeFilter !== "all") {
+        url += `&activityType=${activityTypeFilter}`;
+      }
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       const json = (await res.json()) as RecommendationsResponse;
       setData(json);
 
-      // Store pending session for deferred feedback
-      if (json.conditions) {
-        const top3 = json.activities.slice(0, 3).map(a => a.id as ActivityId);
-        setLearningState(prev => {
-          if (!prev) return prev;
-          const updated = setPendingSession(prev, {
-            timestamp: Date.now(),
-            conditions: json.conditions!,
-            top3Activities: top3,
-          });
-          saveState(updated);
-          return updated;
-        });
-      }
     } catch (e: any) {
       setError(e?.message ?? "Failed to load recommendations.");
     } finally {
       setBusy(false);
     }
-  }, [canFetch, lat, lon, windowHours]);
+  }, [canFetch, lat, lon, windowHours, activityTypeFilter]);
 
-  // Fetch recommendations when we first get a location and when windowHours changes
+  // Fetch recommendations when we first get a location and when windowHours or activityTypeFilter changes
   useEffect(() => {
     if (canFetch) fetchRecs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canFetch, windowHours]);
+  }, [canFetch, windowHours, activityTypeFilter]);
 
   // Fetch places when in "places" mode
   useEffect(() => {
@@ -204,7 +169,7 @@ export default function Page() {
   }, [canFetch, mode, lat, lon]);
 
 
-  // Fetch trail markers when in "trails" mode (OSM + USFS + Outbound for hike; Outbound only for run)
+  // Fetch trail markers when in "trails" mode
   useEffect(() => {
     async function fetchTrails() {
       if (!canFetch || mode !== "trails") return;
@@ -218,17 +183,16 @@ export default function Page() {
       setUsfsLines(new Map());
 
       try {
-        if (trailActivityType === "run" || trailActivityType === "mtb") {
-          const activityType = trailActivityType === "run" ? "running" : "mtb";
-          const dbRes = await fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=${activityType}&radiusKm=40`);
-          if (!dbRes.ok) throw new Error(`${activityType} spots request failed: ${dbRes.status}`);
+        if (activityTypeFilter !== "all") {
+          const dbRes = await fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=${activityTypeFilter}&radiusKm=16`);
+          if (!dbRes.ok) throw new Error(`${activityTypeFilter} spots request failed: ${dbRes.status}`);
           const json = await dbRes.json();
           setTrailItems(json.items ?? []);
         } else {
           const [osmRes, usfsRes, dbRes] = await Promise.allSettled([
             fetch(`/api/trails?lat=${lat}&lon=${lon}&radiusMiles=${trailsRadiusMiles}&limitItems=180`),
             fetch(`/api/trails-usfs?lat=${lat}&lon=${lon}&radiusMiles=30`),
-            fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=hiking&radiusKm=40`),
+            fetch(`/api/activities-db?lat=${lat}&lon=${lon}&radiusKm=16`),
           ]);
 
           let osmItems: TrailItem[] = [];
@@ -243,21 +207,18 @@ export default function Page() {
           if (usfsRes.status === "fulfilled" && usfsRes.value.ok) {
             const json = await usfsRes.value.json();
             usfsItems = json.items ?? [];
-            // Pre-load USFS geometries into a map for instant line display on click
             const lineMap = new Map<string, TrailLine>();
             for (const ln of (json.lines ?? []) as TrailLine[]) {
               lineMap.set(ln.id, ln);
             }
             setUsfsLines(lineMap);
           }
-          // USFS failure is best-effort — silently skip
 
           let dbItems: TrailItem[] = [];
           if (dbRes.status === "fulfilled" && dbRes.value.ok) {
             const json = await dbRes.value.json();
             dbItems = json.items ?? [];
           }
-          // Outbound failure is best-effort — silently skip
 
           setTrailItems([...osmItems, ...usfsItems, ...dbItems]);
         }
@@ -269,8 +230,10 @@ export default function Page() {
       }
     }
 
-    fetchTrails();
-  }, [canFetch, lat, lon, mode, trailActivityType]);
+    if (mode === "trails") {
+        fetchTrails();
+    }
+  }, [canFetch, lat, lon, mode, activityTypeFilter]);
 
   async function loadLinesFor(
     refType: "relation" | "way" | "usfs",
@@ -282,7 +245,6 @@ export default function Page() {
     setSelectedTrailLabel(label);
     setSelectedTrailError(null);
 
-    // USFS trails have pre-loaded geometry — no API call needed
     if (refType === "usfs") {
       const usfsId = String(id);
       const preloaded = usfsLines.get(usfsId);
@@ -333,67 +295,101 @@ export default function Page() {
     }
   }
 
-  // ─── Inline activity rating ────────────────────────────────────────────────
-  const [ratingTarget, setRatingTarget] = useState<ActivityId | null>(null);
-  const [ratingValue, setRatingValue] = useState(70);
-
-  function submitRating(activityId: ActivityId) {
-    if (!learningState || !data?.conditions) return;
-    const state = addObservation(learningState, activityId, data.conditions, ratingValue);
-    saveState(state);
-    setLearningState(state);
-    setRatingTarget(null);
-  }
-
-  // ─── Blended activity scores ───────────────────────────────────────────────
-  const blendedActivities = useMemo(() => {
-    if (!data) return [];
-    if (!learningState || !data.conditions) return data.activities;
-
-    return data.activities
-      .map(a => ({
-        ...a,
-        score: getBlendedScore(learningState, a.id as ActivityId, a.score, data.conditions!),
-      }))
-      .sort((a, b) => b.score - a.score);
-  }, [data, learningState]);
-
-  // ─── Feedback handlers ─────────────────────────────────────────────────────
-  function handleFeedbackSubmit(ratings: { activityId: ActivityId; rating: number }[]) {
-    if (!learningState?.pendingSession) return;
-    const { conditions } = learningState.pendingSession;
-
-    let state = learningState;
-    for (const { activityId, rating } of ratings) {
-      state = addObservation(state, activityId, conditions, rating);
+  // Use pre-computed conditions from activity if available, otherwise fetch
+  async function handleRateClick(activity: any) {
+    setRateTarget({ activityId: activity.id, name: activity.name, lat: activity.lat, lon: activity.lon });
+    setRateValue(70);
+    
+    if (activity.bestHourConditions) {
+        setRateConditions(activity.bestHourConditions);
+        setRateConditionsBusy(false);
+    } else {
+        setRateConditions(null);
+        setRateConditionsBusy(true);
+        try {
+          const res = await fetch(`/api/conditions?lat=${activity.lat}&lon=${activity.lon}&windowHours=${windowHours}`);
+          if (res.ok) {
+            const json = await res.json();
+            setRateConditions(json.conditions ?? null);
+          }
+        } catch { /* leave rateConditions null */ } finally {
+          setRateConditionsBusy(false);
+        }
     }
-    state = clearPendingSession(state);
-    saveState(state);
-    setLearningState(state);
-    setShowFeedback(false);
   }
 
-  function handleFeedbackSkip() {
-    if (!learningState) return;
-    const state = clearPendingSession(learningState);
-    saveState(state);
-    setLearningState(state);
-    setShowFeedback(false);
+  // Surf-specific: augments base conditions with swell + offshore angle from the spot
+  async function handleSurfRateClick(spot: any) {
+    setRateTarget({ activityId: "surf", name: spot.name, lat: spot.lat, lon: spot.lon });
+    setRateConditions(null);
+    setRateConditionsBusy(true);
+    setRateValue(70);
+    try {
+      const res = await fetch(`/api/conditions?lat=${spot.lat}&lon=${spot.lon}&windowHours=${windowHours}`);
+      if (res.ok) {
+        const json = await res.json();
+        const baseCond: Conditions | null = json.conditions ?? null;
+        if (baseCond) {
+          const sc = spot.conditions ?? {};
+          // Compute wind-vs-offshore angle using the spot's window geometry
+          let windOffshoreAngleDeg: number | undefined;
+          if (
+            typeof sc.windDirDeg === "number" &&
+            spot.wind_offshore_min_deg != null &&
+            spot.wind_offshore_max_deg != null
+          ) {
+            const center = circularCenter(spot.wind_offshore_min_deg, spot.wind_offshore_max_deg);
+            windOffshoreAngleDeg = angularDist(sc.windDirDeg, center);
+          }
+          setRateConditions({
+            ...baseCond,
+            swellHeightM: sc.swellHeightM ?? undefined,
+            swellPeriodS: sc.swellPeriodS ?? undefined,
+            windOffshoreAngleDeg,
+          });
+        }
+      }
+    } catch { /* leave null */ } finally {
+      setRateConditionsBusy(false);
+    }
   }
 
-  function handleReset() {
-    const state = defaultState();
-    saveState(state);
-    setLearningState(state);
+  function submitRating() {
+    if (!rateTarget || !rateConditions || !learningState) return;
+    const updated = addObservation(learningState, rateTarget.activityId, rateConditions, rateValue);
+    saveState(updated);
+    setLearningState(updated);
+    setRateTarget(null);
+    setRateConditions(null);
+  }
+
+  function cancelRating() {
+    setRateTarget(null);
+    setRateConditions(null);
+  }
+
+  function conditionsSummary(c: Conditions): string {
+    const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    const sector = Math.round(((c.windDirDeg % 360) + 360) % 360 / 45) % 8;
+    const parts = [
+      `${Math.round(c.tempF)}°F`,
+      `${Math.round(c.windMph)} mph ${dirs[sector]}`,
+      `${Math.round(c.precipProb)}% rain`,
+    ];
+    if (c.aqi !== null) parts.push(`AQI ${Math.round(c.aqi)}`);
+    if (c.swellHeightM != null) parts.push(`${c.swellHeightM.toFixed(1)}m swell`);
+    if (c.swellPeriodS != null) parts.push(`${Math.round(c.swellPeriodS)}s period`);
+    if (c.windOffshoreAngleDeg != null) parts.push(`${Math.round(c.windOffshoreAngleDeg)}° from offshore`);
+    if (c.timeISO) {
+        const time = new Date(c.timeISO).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        parts.push(`at ${time}`);
+    }
+    return parts.join(" · ");
   }
 
   const mapSubtitle =
     mode === "trails"
-      ? trailActivityType === "run"
-        ? "Running spots: click a marker for details"
-        : trailActivityType === "mtb"
-        ? "Mountain biking spots: click a marker for details"
-        : `Hiking: click a trail marker, then "Load trail line" (within ${trailsRadiusMiles} mi)`
+      ? `Showing ${activityTypeFilter} spots`
       : `Places: ${selectedPlaceType} (within ${radiusMiles} mi)`;
 
   return (
@@ -420,6 +416,7 @@ export default function Page() {
             setLat(la);
             setLon(lo);
             setLocationLabel("You are here");
+            setMapCenter([la, lo]);
           }}
         />
 
@@ -428,6 +425,7 @@ export default function Page() {
             setLat(la);
             setLon(lo);
             setLocationLabel(name);
+            setMapCenter([la, lo]);
           }}
         />
 
@@ -478,54 +476,67 @@ export default function Page() {
             }}
           >
             {showLearnedPrefs ? "Hide preferences" : "Learned preferences"}
+            {learningState.observations.length > 0 && (
+              <span style={{ marginLeft: 6, color: "#3b82f6", fontWeight: 700 }}>
+                ({learningState.observations.length})
+              </span>
+            )}
           </button>
         )}
-
       </section>
-
-      {!canFetch ? (
-        <div
-          style={{
-            padding: 14,
-            border: "1px dashed #ccc",
-            borderRadius: 14,
-            color: "#555",
-          }}
-        >
-          Click <b>Use my location</b> or search a destination to get recommendations.
-        </div>
-      ) : null}
-
-      {error ? (
-        <div
-          style={{
-            padding: 14,
-            border: "1px solid #ffcccc",
-            background: "#fff5f5",
-            borderRadius: 14,
-            color: "#7a1f1f",
-            marginTop: 12,
-          }}
-        >
-          {error}
-        </div>
-      ) : null}
 
       {canFetch ? (
         <section style={{ marginTop: 14 }}>
+           <div style={{ marginBottom: 8 }}>
+            <span style={{ marginRight: 8, fontSize: 13, color: "#444" }}>Filter by:</span>
+            <button
+                key="all"
+                onClick={() => { setActivityTypeFilter("all"); setMode("trails"); }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #ddd",
+                  background: activityTypeFilter === "all" ? "#e0e7ff" : "white",
+                  cursor: "pointer",
+                  marginRight: 6,
+                  fontSize: 13,
+                }}
+              >
+                All
+              </button>
+            {ACTIVITY_CATALOG.map(activity => (
+              <button
+                key={activity.id}
+                onClick={() => {
+                  if (activity.id === 'surf') {
+                    setMode('surf');
+                    setActivityTypeFilter('surf');
+                  } else {
+                    setMode('trails');
+                    setActivityTypeFilter(activity.id);
+                  }
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #ddd",
+                  background: activityTypeFilter === activity.id ? "#e0e7ff" : "white",
+                  cursor: "pointer",
+                  marginRight: 6,
+                  fontSize: 13,
+                }}
+              >
+                {activity.name}
+              </button>
+            ))}
+          </div>
           <div style={{ marginBottom: 8, color: "#444", fontSize: 13 }}>
             {mapSubtitle}
           </div>
 
-	  {mode === "surf" ? (
-	    <div style={{ marginBottom: 8, fontSize: 12, color: "#444" }}>
-	      surfSpots count: {surfSpots.length}
-	    </div>
-	  ) : null}
-
           <MapViewDynamic
-            lat={lat!}
-            lon={lon!}
+            lat={mapCenter?.[0] ?? lat!}
+            lon={mapCenter?.[1] ?? lon!}
             label={locationLabel}
             places={mode === "places" ? places : []}
             trailItems={mode === "trails" ? trailItems : []}
@@ -536,36 +547,6 @@ export default function Page() {
 	    onViewForecast={(name, transectId) => setForecastSpot({ name, transectId })}
           />
 
-          {/* Places status */}
-          {mode === "places" && placesBusy ? (
-            <div style={{ marginTop: 8, color: "#555" }}>
-              Loading nearby places…
-            </div>
-          ) : null}
-          {mode === "places" && placesError ? (
-            <div style={{ marginTop: 8, color: "crimson" }}>{placesError}</div>
-          ) : null}
-
-          {/* Trails markers status */}
-          {mode === "trails" && trailsBusy ? (
-            <div style={{ marginTop: 8, color: "#555" }}>Loading trails…</div>
-          ) : null}
-          {mode === "trails" && trailsError ? (
-            <div style={{ marginTop: 8, color: "crimson" }}>{trailsError}</div>
-          ) : null}
-
-          {/* Selected trail line status */}
-          {mode === "trails" ? (
-            <div style={{ marginTop: 8, color: "#444", fontSize: 13 }}>
-              {selectedTrailBusy ? "Loading selected trail line…" : null}
-              {!selectedTrailBusy && selectedTrailLabel
-                ? `Selected: ${selectedTrailLabel}`
-                : null}
-              {selectedTrailError ? (
-                <div style={{ color: "crimson" }}>{selectedTrailError}</div>
-              ) : null}
-            </div>
-          ) : null}
         </section>
       ) : null}
 
@@ -574,128 +555,11 @@ export default function Page() {
           <div style={{ marginTop: 18, color: "#444", fontSize: 13 }}>
             Generated: {new Date(data.generatedAtISO).toLocaleString()} · (
             {data.lat.toFixed(4)}, {data.lon.toFixed(4)})
-            {learningState && learningState.observations.length > 0 && (
-              <span style={{ marginLeft: 8, color: "#3b82f6" }}>
-                · {learningState.observations.length} rating{learningState.observations.length === 1 ? "" : "s"} learned
-              </span>
-            )}
           </div>
-
-          <section
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: 12,
-              marginTop: 12,
-            }}
-          >
-            {blendedActivities.filter((a) => a.id !== "walk").slice(0, 6).map((a) => (
-              <div key={a.id}>
-                <div
-                  onClick={() => {
-		    if (a.id === "hike") { setTrailActivityType("hike"); setMode("trails"); return; }
-		    if (a.id === "run")  { setTrailActivityType("run");  setMode("trails"); return; }
-		    if (a.id === "mtb")  { setTrailActivityType("mtb");  setMode("trails"); return; }
-		    if (a.id === "surf") { setMode("surf"); return; }
-		    setMode("places");
-		    setSelectedPlaceType(placeTypeForActivity(a.id));
-		  }}
-                  style={{ cursor: "pointer" }}
-                  title={a.id === "hike" ? "Click to show nearby hiking trail markers" : "Click to show matching places on the map"}
-                >
-                  <ActivityCard a={a} />
-                </div>
-
-                {/* Inline rating */}
-                {learningState && data?.conditions && (
-                  ratingTarget === a.id ? (
-                    <div
-                      style={{
-                        marginTop: 6,
-                        padding: "10px 12px",
-                        border: "1px solid #bae6fd",
-                        borderRadius: 10,
-                        background: "#f0f9ff",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          value={ratingValue}
-                          onChange={e => setRatingValue(Number(e.target.value))}
-                          style={{ flex: 1, accentColor: "#3b82f6" }}
-                        />
-                        <span style={{ fontWeight: 700, fontSize: 15, width: 28, textAlign: "right" }}>
-                          {ratingValue}
-                        </span>
-                      </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button
-                          onClick={() => submitRating(a.id as ActivityId)}
-                          style={{
-                            flex: 1,
-                            padding: "6px 0",
-                            borderRadius: 8,
-                            border: "none",
-                            background: "#3b82f6",
-                            color: "white",
-                            fontWeight: 600,
-                            fontSize: 13,
-                            cursor: "pointer",
-                          }}
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setRatingTarget(null)}
-                          style={{
-                            padding: "6px 10px",
-                            borderRadius: 8,
-                            border: "1px solid #ddd",
-                            background: "white",
-                            fontSize: 13,
-                            cursor: "pointer",
-                          }}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => { setRatingTarget(a.id as ActivityId); setRatingValue(70); }}
-                      style={{
-                        marginTop: 4,
-                        width: "100%",
-                        padding: "5px 0",
-                        borderRadius: 8,
-                        border: "1px solid #e5e7eb",
-                        background: "white",
-                        color: "#6b7280",
-                        fontSize: 12,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Rate this activity
-                    </button>
-                  )
-                )}
-              </div>
-            ))}
-          </section>
-
-          {showLearnedPrefs && learningState && (
-            <LearnedPrefsPanel
-              betaParams={learningState.betaParams}
-              onReset={handleReset}
-            />
-          )}
 
           <section style={{ marginTop: 18 }}>
             <h2 style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>
-              Next hours preview
+              Top Activities
             </h2>
             <div
               style={{
@@ -709,63 +573,124 @@ export default function Page() {
               >
                 <thead>
                   <tr style={{ background: "#fafafa" }}>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        padding: 10,
-                        borderBottom: "1px solid #eee",
-                      }}
-                    >
-                      Time
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
+                      Activity
                     </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        padding: 10,
-                        borderBottom: "1px solid #eee",
-                      }}
-                    >
-                      Feels like (°F)
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
+                      Score
                     </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        padding: 10,
-                        borderBottom: "1px solid #eee",
-                      }}
-                    >
-                      Rain chance
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
+                      Reasoning
                     </th>
-                    <th
-                      style={{
-                        textAlign: "left",
-                        padding: 10,
-                        borderBottom: "1px solid #eee",
-                      }}
-                    >
-                      Wind (mph)
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee", width: 120 }}>
+                      Actions
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.hourlyPreview.map((h) => (
-                    <tr key={h.timeISO}>
-                      <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                        {new Date(h.timeISO).toLocaleString()}
-                      </td>
-                      <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                        {typeof h.tempF === "number" ? Math.round(h.tempF) : "—"}
-                      </td>
-                      <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                        {typeof h.precipProb === "number"
-                          ? `${Math.round(h.precipProb)}%`
-                          : "—"}
-                      </td>
-                      <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                        {typeof h.windMph === "number" ? Math.round(h.windMph) : "—"}
-                      </td>
-                    </tr>
-                  ))}
+                  {mode === "surf"
+                    ? surfSpots.slice(0, 10).flatMap((s: any) => {
+                        const isRating = rateTarget?.name === s.name && rateTarget?.lat === s.lat;
+                        return [
+                          <tr key={s.id ?? s.name}>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
+                                <button
+                                    onClick={() => setMapCenter([s.lat, s.lon])}
+                                    style={{ background: 'none', border: 'none', padding: 0, color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}
+                                >
+                                    {s.name}
+                                </button>
+                            </td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>{s.score ?? "—"}</td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
+                              {(s.reasons ?? []).slice(0, 3).join(", ")}
+                            </td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    {learningState && (
+                                        <button
+                                        onClick={() => isRating ? cancelRating() : handleSurfRateClick(s)}
+                                        style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: isRating ? "#fee2e2" : "white" }}
+                                        >
+                                        {isRating ? "Cancel" : "Rate"}
+                                        </button>
+                                    )}
+                                    {s.cdip_transect_id && (
+                                        <button
+                                            onClick={() => setForecastSpot({ name: s.name, transectId: s.cdip_transect_id })}
+                                            style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: "white" }}
+                                        >
+                                            Forecast
+                                        </button>
+                                    )}
+                                </div>
+                            </td>
+                          </tr>,
+                          ...(isRating ? [
+                            <tr key={`${s.name}-rating`}>
+                              <td colSpan={4} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
+                                <RatingRow
+                                  name={s.name}
+                                  busy={rateConditionsBusy}
+                                  conditions={rateConditions}
+                                  value={rateValue}
+                                  onValueChange={setRateValue}
+                                  onSubmit={submitRating}
+                                  onCancel={cancelRating}
+                                  conditionsSummary={conditionsSummary}
+                                />
+                              </td>
+                            </tr>
+                          ] : []),
+                        ];
+                      })
+                    : data.activities.slice(0, 10).flatMap((a: any) => {
+                        const isRating = rateTarget?.name === a.name && rateTarget?.lat === a.lat;
+                        return [
+                          <tr key={a.name}>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
+                                <button
+                                    onClick={() => setMapCenter([a.lat, a.lon])}
+                                    style={{ background: 'none', border: 'none', padding: 0, color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}
+                                >
+                                    {a.name}
+                                </button>
+                            </td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>{a.score}</td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
+                              {a.why.join(", ")}
+                            </td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
+                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    {learningState && (a.lat != null && a.lon != null) && (
+                                        <button
+                                            onClick={() => isRating ? cancelRating() : handleRateClick(a)}
+                                            style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: isRating ? "#fee2e2" : "white" }}
+                                        >
+                                            {isRating ? "Cancel" : "Rate"}
+                                        </button>
+                                    )}
+                                </div>
+                            </td>
+                          </tr>,
+                          ...(isRating ? [
+                            <tr key={`${a.name}-rating`}>
+                              <td colSpan={4} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
+                                <RatingRow
+                                  name={a.name}
+                                  busy={rateConditionsBusy}
+                                  conditions={rateConditions}
+                                  value={rateValue}
+                                  onValueChange={setRateValue}
+                                  onSubmit={submitRating}
+                                  onCancel={cancelRating}
+                                  conditionsSummary={conditionsSummary}
+                                />
+                              </td>
+                            </tr>
+                          ] : []),
+                        ];
+                      })}
                 </tbody>
               </table>
             </div>
@@ -783,13 +708,90 @@ export default function Page() {
         />
       )}
 
-      {showFeedback && learningState?.pendingSession && (
-        <FeedbackPrompt
-          pendingSession={learningState.pendingSession}
-          onSubmit={handleFeedbackSubmit}
-          onSkip={handleFeedbackSkip}
+      {showLearnedPrefs && learningState && (
+        <LearnedPrefsPanel
+          betaParams={learningState.betaParams}
+          onReset={() => {
+            const { defaultState } = require("@/lib/learning/store");
+            const s = defaultState();
+            saveState(s);
+            setLearningState(s);
+          }}
         />
       )}
+
     </main>
+  );
+}
+
+// ─── Inline rating row ─────────────────────────────────────────────────────────
+
+function RatingRow({
+  name,
+  busy,
+  conditions,
+  value,
+  onValueChange,
+  onSubmit,
+  onCancel,
+  conditionsSummary,
+}: {
+  name: string;
+  busy: boolean;
+  conditions: import("@/lib/types").Conditions | null;
+  value: number;
+  onValueChange: (v: number) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  conditionsSummary: (c: import("@/lib/types").Conditions) => string;
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>
+        {busy
+          ? `Fetching conditions at ${name} location…`
+          : conditions
+          ? `Conditions at site: ${conditionsSummary(conditions)}`
+          : "Could not fetch site conditions"}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={value}
+          disabled={busy || !conditions}
+          onChange={e => onValueChange(Number(e.target.value))}
+          style={{ flex: 1, accentColor: "#3b82f6" }}
+        />
+        <span style={{ fontWeight: 700, width: 28, textAlign: "right" }}>{value}</span>
+        <button
+          onClick={onSubmit}
+          disabled={busy || !conditions}
+          style={{
+            padding: "5px 12px",
+            borderRadius: 7,
+            border: "none",
+            background: busy || !conditions ? "#cbd5e1" : "#3b82f6",
+            color: "white",
+            fontWeight: 600,
+            fontSize: 13,
+            cursor: busy || !conditions ? "not-allowed" : "pointer",
+          }}
+        >
+          Save
+        </button>
+        <button
+          onClick={onCancel}
+          style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #ddd", background: "white", fontSize: 13, cursor: "pointer" }}
+        >
+          Cancel
+        </button>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#aaa", marginTop: 2 }}>
+        <span>Terrible (0)</span>
+        <span>Amazing (100)</span>
+      </div>
+    </div>
   );
 }

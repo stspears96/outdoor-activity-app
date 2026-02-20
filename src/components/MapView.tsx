@@ -1,6 +1,6 @@
 "use client";
 
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { Place, TrailItem, TrailLine } from "@/lib/types";
 import type { SurfSpotMarker } from "./MapViewDynamic"; // or define it in types.ts and import from there
@@ -95,6 +95,16 @@ function windFromToWindTo(windFromDeg?: number) {
   return typeof d === "number" ? (d + 180) % 360 : undefined;
 }
 
+function ChangeView({ center, zoom }: { center: [number, number]; zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center, zoom);
+  }, [center, zoom, map]);
+  return null;
+}
+
+import { useEffect } from "react";
+
 export default function MapView(props: {
   lat: number;
   lon: number;
@@ -122,6 +132,7 @@ export default function MapView(props: {
   return (
     <div style={{ border: "1px solid #e5e5e5", borderRadius: 14, overflow: "hidden" }}>
       <MapContainer center={[lat, lon]} zoom={13} scrollWheelZoom={true} style={{ height, width: "100%" }}>
+        <ChangeView center={[lat, lon]} zoom={13} />
         <TileLayer
           attribution='&copy; OpenStreetMap contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -362,4 +373,3 @@ export default function MapView(props: {
     </div>
   );
 }
-

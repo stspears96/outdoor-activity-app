@@ -1,0 +1,12 @@
+import type { ActivityId } from "./types";
+
+export const ACTIVITY_CATALOG: Array<{ id: ActivityId; name: string }> = [
+  { id: "walk", name: "Walk" },
+  { id: "run", name: "Run" },
+  { id: "hike", name: "Hike" },
+  { id: "bike", name: "Bike" },
+  { id: "mtb", name: "Mountain Bike" },
+  { id: "picnic", name: "Picnic" },
+  { id: "cafe", name: "Outdoor café" },
+  { id: "surf", name: "Surf" },
+];
