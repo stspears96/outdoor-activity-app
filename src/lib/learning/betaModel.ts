@@ -140,13 +140,31 @@ function initActivityBetaParams(id: ActivityId): ActivityBetaParams {
     swellHeight["overhead"]  = serverDerivedAB(0.6);
   }
 
-  // Swell period
-  const swellPeriod = neutralMap(["short", "medium", "good", "long"]);
+  // Peak Period
+  const swellPeakPeriod = neutralMap(["short", "medium", "good", "long"]);
   if (id === "surf") {
-    swellPeriod["short"]  = { ...STRONG_NEG };
-    swellPeriod["medium"] = serverDerivedAB(0.5);
-    swellPeriod["good"]   = serverDerivedAB(0.85);
-    swellPeriod["long"]   = serverDerivedAB(0.95);
+    swellPeakPeriod["short"]  = { ...STRONG_NEG };
+    swellPeakPeriod["medium"] = serverDerivedAB(0.5);
+    swellPeakPeriod["good"]   = serverDerivedAB(0.85);
+    swellPeakPeriod["long"]   = serverDerivedAB(0.95);
+  }
+
+  // Average Period
+  const swellAvgPeriod = neutralMap(["short", "medium", "good", "long"]);
+  if (id === "surf") {
+    swellAvgPeriod["short"]  = { ...STRONG_NEG };
+    swellAvgPeriod["medium"] = serverDerivedAB(0.4);
+    swellAvgPeriod["good"]   = serverDerivedAB(0.7);
+    swellAvgPeriod["long"]   = serverDerivedAB(0.85);
+  }
+
+  // Period Diff (Tp - Ta)
+  const swellPeriodDiff = neutralMap(["very_small", "small", "moderate", "large"]);
+  if (id === "surf") {
+    swellPeriodDiff["very_small"] = serverDerivedAB(0.3);
+    swellPeriodDiff["small"]      = serverDerivedAB(0.6);
+    swellPeriodDiff["moderate"]   = serverDerivedAB(0.9);
+    swellPeriodDiff["large"]      = serverDerivedAB(0.95);
   }
 
   // Wind vs offshore window
@@ -183,7 +201,9 @@ function initActivityBetaParams(id: ActivityId): ActivityBetaParams {
     tempWind,
     daylight,
     swellHeight,
-    swellPeriod,
+    swellPeakPeriod,
+    swellAvgPeriod,
+    swellPeriodDiff,
     windOffshore,
   };
 }
@@ -212,7 +232,6 @@ export function updateBeta(
   for (const [variable, bucketLabel] of Object.entries(buckets)) {
     let varParams = (actParams as Record<string, Record<string, AB>>)[variable];
     if (!varParams) {
-      // Lazy-init missing dimension (e.g. surf dims on old stored state)
       const dim = BUCKET_DIMS.find(d => d.key === variable);
       if (!dim) continue;
       varParams = neutralMap(dim.buckets);

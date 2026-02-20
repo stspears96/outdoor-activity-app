@@ -22,7 +22,9 @@ export type ActivityBetaParams = {
   daylight: Record<string, AB>;
   // Surf-specific — optional so old localStorage data stays compatible
   swellHeight?: Record<string, AB>;
-  swellPeriod?: Record<string, AB>;
+  swellPeakPeriod?: Record<string, AB>;
+  swellAvgPeriod?: Record<string, AB>;
+  swellPeriodDiff?: Record<string, AB>;
   windOffshore?: Record<string, AB>;
 };
 

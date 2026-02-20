@@ -35,11 +35,9 @@ export async function GET(req: Request) {
   const base =
     `https://thredds.cdip.ucsd.edu/thredds/ncss/point/cdip/model/MOP_alongshore/${transect}_nowcast.nc`;
 
-  // Use time=all to avoid "No features..." when now is past the dataset's latest timestamp.
-  // NCSS supports time=all for point datasets. :contentReference[oaicite:1]{index=1}
   const url =
     `${base}?` +
-    `var=waveHs&var=waveTp&var=waveDp&var=waveDm&var=waveFlagPrimary` +
+    `var=waveHs&var=waveTp&var=waveTa&var=waveDp&var=waveDm&var=waveFlagPrimary` +
     `&time=all` +
     `&accept=csv`;
 
@@ -64,6 +62,7 @@ export async function GET(req: Request) {
         time: r.time ?? r["time"] ?? "",
         waveHs: r.waveHs ? Number(r.waveHs) : null,
         waveTp: r.waveTp ? Number(r.waveTp) : null,
+        waveTa: r.waveTa ? Number(r.waveTa) : null,
         waveDp: r.waveDp ? Number(r.waveDp) : null,
         waveDm: r.waveDm ? Number(r.waveDm) : null,
         waveFlagPrimary: Number.isFinite(flag) ? flag : null,
@@ -90,9 +89,8 @@ export async function GET(req: Request) {
     transect,
     start,
     end,
-    count: points.length,
-    points,
+    count: trimmed.length,
+    points: trimmed,
     source: "CDIP THREDDS NCSS MOP_alongshore",
   });
 }
-

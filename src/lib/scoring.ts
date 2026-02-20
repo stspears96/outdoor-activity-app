@@ -28,18 +28,6 @@ function pickHourIndices(weather: WeatherResponse, windowHours: number) {
   return idxs;
 }
 
-function avg(arr: (number | undefined)[]) {
-  const vals = arr.filter((v): v is number => typeof v === "number");
-  if (!vals.length) return undefined;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
-}
-
-function max(arr: (number | undefined)[]) {
-  const vals = arr.filter((v): v is number => typeof v === "number");
-  if (!vals.length) return undefined;
-  return Math.max(...vals);
-}
-
 function mphToPenalty(mph: number, soft: number, hard: number) {
   // 1 at <=soft, 0 at >=hard
   if (mph <= soft) return 1;
@@ -59,14 +47,8 @@ export function computeActivityScore(
   name: string,
   weather: WeatherResponse,
   windowHours: number,
-  sunrise?: string,
-  sunset?: string,
 ): ActivityScore {
   const idxs = pickHourIndices(weather, windowHours);
-
-  const tempF = avg(idxs.map(i => weather.hourly.apparent_temperature?.[i] ?? weather.hourly.temperature_2m?.[i]));
-  const precipProb = max(idxs.map(i => weather.hourly.precipitation_probability?.[i]));
-  const windMph = max(idxs.map(i => weather.hourly.windspeed_10m?.[i]));
 
   // Default preferences by activity
   const prefs: Record<ActivityId, { temp: [number, number, number, number]; wind: [number, number]; precipWeight: number; windWeight: number; tempWeight: number; daytime: boolean }> = {
@@ -82,33 +64,13 @@ export function computeActivityScore(
 
   const p = prefs[id];
 
-  const tempComponent = typeof tempF === "number"
-    ? bandScore(tempF, p.temp[1], p.temp[2], p.temp[0], p.temp[3])
-    : 0.6;
-
-  const windComponent = typeof windMph === "number"
-    ? mphToPenalty(windMph, p.wind[0], p.wind[1])
-    : 0.7;
-
-  const precipComponent = typeof precipProb === "number"
-    ? precipToPenalty(precipProb)
-    : 0.7;
-
-  let score01 =
-    p.tempWeight * tempComponent +
-    p.windWeight * windComponent +
-    p.precipWeight * precipComponent;
-
-  const why: string[] = [];
-  if (typeof precipProb === "number") why.push(`Max rain chance ~${Math.round(precipProb)}% in the next ${windowHours}h`);
-  if (typeof windMph === "number") why.push(`Peak wind ~${Math.round(windMph)} mph`);
-  if (typeof tempF === "number") why.push(`Avg “feels like” ~${Math.round(tempF)}°F`);
-
   // Best hour (highest per-hour mini-score)
   let bestHourISO: string | undefined;
-  let best = -1;
+  let bestScore01 = -1;
+  let bestHourData = { temp: 0, wind: 0, precip: 0 };
 
   for (const i of idxs) {
+    const timeISO = weather.hourly.time[i];
     const t = weather.hourly.apparent_temperature?.[i] ?? weather.hourly.temperature_2m?.[i];
     const w = weather.hourly.windspeed_10m?.[i];
     const pr = weather.hourly.precipitation_probability?.[i];
@@ -117,24 +79,50 @@ export function computeActivityScore(
     const wComp = typeof w === "number" ? mphToPenalty(w, p.wind[0], p.wind[1]) : 0.7;
     const prComp = typeof pr === "number" ? precipToPenalty(pr) : 0.7;
 
-    const s = p.tempWeight * tComp + p.windWeight * wComp + p.precipWeight * prComp;
-    if (s > best) {
-      best = s;
-      bestHourISO = weather.hourly.time[i];
+    let s = p.tempWeight * tComp + p.windWeight * wComp + p.precipWeight * prComp;
+    
+    // Day-specific sunrise/sunset check
+    if (p.daytime && weather.daily?.sunrise && weather.daily?.sunset) {
+        const hourTime = new Date(timeISO).getTime();
+        const dateStr = timeISO.split('T')[0]; // "2026-02-20"
+        
+        // Find matching sunrise/sunset for this date
+        const sunIdx = weather.daily.sunrise.findIndex(sr => sr.startsWith(dateStr));
+        if (sunIdx !== -1) {
+            const sunriseTime = new Date(weather.daily.sunrise[sunIdx]).getTime();
+            const sunsetTime = new Date(weather.daily.sunset[sunIdx]).getTime();
+            if (hourTime < sunriseTime || hourTime > sunsetTime) {
+                s *= 0.1;
+            }
+        }
+    }
+
+    if (s > bestScore01) {
+      bestScore01 = s;
+      bestHourISO = timeISO;
+      bestHourData = { temp: t ?? 0, wind: w ?? 0, precip: pr ?? 0 };
     }
   }
 
-  if (p.daytime && bestHourISO && sunrise && sunset) {
-    const bestHour = new Date(bestHourISO).getTime();
-    const sunriseTime = new Date(sunrise).getTime();
-    const sunsetTime = new Date(sunset).getTime();
-    if (bestHour < sunriseTime || bestHour > sunsetTime) {
-      score01 *= 0.1; // Heavy penalty for being at night
-      why.push("Activity is best during the day, but best hour is at night");
+  const score = Math.round(clamp(bestScore01, 0, 1) * 100);
+
+  const why: string[] = [];
+  why.push(`Rain chance ~${Math.round(bestHourData.precip)}%`);
+  why.push(`Wind ~${Math.round(bestHourData.wind)} mph`);
+  why.push(`“Feels like” ~${Math.round(bestHourData.temp)}°F`);
+
+  if (p.daytime && bestHourISO && weather.daily?.sunrise && weather.daily?.sunset) {
+    const hourTime = new Date(bestHourISO).getTime();
+    const dateStr = bestHourISO.split('T')[0];
+    const sunIdx = weather.daily.sunrise.findIndex(sr => sr.startsWith(dateStr));
+    if (sunIdx !== -1) {
+        const sunriseTime = new Date(weather.daily.sunrise[sunIdx]).getTime();
+        const sunsetTime = new Date(weather.daily.sunset[sunIdx]).getTime();
+        if (hourTime < sunriseTime || hourTime > sunsetTime) {
+            why.push("Note: Best hour is at night for this daytime activity");
+        }
     }
   }
-
-  const score = Math.round(clamp(score01, 0, 1) * 100);
 
   // Little nudge so UI doesn't look too uniform
   const variance = (id.charCodeAt(0) % 7) / 200; // 0..0.03
@@ -145,7 +133,7 @@ export function computeActivityScore(
 
 export function scoreActivities(weather: WeatherResponse, windowHours: number) {
   const activities = ACTIVITY_CATALOG
-    .map(a => computeActivityScore(a.id, a.name, weather, windowHours, undefined, undefined))
+    .map(a => computeActivityScore(a.id, a.name, weather, windowHours))
     .sort((a, b) => b.score - a.score);
 
   return activities;

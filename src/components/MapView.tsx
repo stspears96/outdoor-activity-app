@@ -2,6 +2,7 @@
 
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
+import { useEffect } from "react";
 import type { Place, TrailItem, TrailLine } from "@/lib/types";
 import type { SurfSpotMarker } from "./MapViewDynamic"; // or define it in types.ts and import from there
 
@@ -103,8 +104,6 @@ function ChangeView({ center, zoom }: { center: [number, number]; zoom: number }
   return null;
 }
 
-import { useEffect } from "react";
-
 export default function MapView(props: {
   lat: number;
   lon: number;
@@ -116,7 +115,7 @@ export default function MapView(props: {
   surfSpots?: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way" | "usfs", id: number | string, label: string) => void;
   onLoadGpxTrack?: (trackId: number, label: string) => void;
-  onViewForecast?: (name: string, transectId: string) => void;
+  onViewForecast?: (name: string, transectId: string, lat: number, lon: number) => void;
 }) {
   const {
     lat,
@@ -158,18 +157,14 @@ export default function MapView(props: {
 
 	  // Prefer swell; fall back to wave
 	  const swellH = s.conditions?.swellHeightM ?? s.conditions?.waveHeightM;
-	  const swellP = s.conditions?.swellPeriodS ?? s.conditions?.wavePeriodS;
+	  const swellP = s.conditions?.swellPeakPeriodS ?? s.conditions?.swellPeriodS ?? s.conditions?.wavePeriodS;
+      const swellTa = s.conditions?.swellAvgPeriodS;
+
 	  const windFrom = s.conditions?.windDirDeg;          // e.g. 53 means FROM NE
 	  const windTo = windFromToWindTo(windFrom);          // 233 means blowing toward SW
 	  const windArrowCssDeg = meteoToCssRotation(windTo); // convert to CSS rotation
 
-	  // If arrows look backwards in practice, flip these (common tweak):
-	  const windArrowDeg = flipDeg180(windDir);   // wind: "from" -> arrow "towards"
-
 	  const swellDir = s.conditions?.swellDirDeg ?? s.conditions?.waveDirDeg;
-	  const swellArrowDeg = normalizeDeg(swellDir); // swell often already "towards"; flip if needed
-	  // For swell, Open-Meteo directions are typically "to" (direction waves travel).
-	  // If yours looks reversed, we’ll flip later, but start with this:
 	  const swellArrowCssDeg = windFromToWindTo(meteoToCssRotation(swellDir));
 
 	  // Offset a tiny bit so arrows don't sit directly on the pin
@@ -196,7 +191,7 @@ export default function MapView(props: {
 		      : "Wind: —"}
 		    <br />
 		    {typeof swellH === "number" && typeof swellP === "number"
-		      ? `Swell: ${swellH.toFixed(1)} m @ ${swellP.toFixed(0)}s @ ${normalizeDeg(swellDir)?.toFixed(0)}°`
+		      ? `Swell: ${swellH.toFixed(1)} m @ ${swellP.toFixed(0)}s${swellTa ? ` (${swellTa.toFixed(0)}s)` : ''} @ ${normalizeDeg(swellDir)?.toFixed(0)}°`
 		      : "Swell: —"}
 		  </div>
 
@@ -210,7 +205,7 @@ export default function MapView(props: {
 
 		  {s.cdipTransectId && props.onViewForecast ? (
 		    <button
-		      onClick={() => props.onViewForecast!(s.name, s.cdipTransectId!)}
+		      onClick={() => props.onViewForecast!(s.name, s.cdipTransectId!, s.lat, s.lon)}
 		      style={{
 			marginTop: 8,
 			padding: "6px 8px",

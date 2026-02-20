@@ -66,7 +66,7 @@ export default function Page() {
   const [surfError, setSurfError] = useState<string | null>(null);
 
   // ---- Swell forecast modal ----
-  const [forecastSpot, setForecastSpot] = useState<{ name: string; transectId: string } | null>(null);
+  const [forecastSpot, setForecastSpot] = useState<any | null>(null);
 
   // ---- Learning / rating ----
   const [learningState, setLearningState] = useState<LearningState | null>(null);
@@ -344,7 +344,9 @@ export default function Page() {
           setRateConditions({
             ...baseCond,
             swellHeightM: sc.swellHeightM ?? undefined,
-            swellPeriodS: sc.swellPeriodS ?? undefined,
+            swellPeakPeriodS: sc.swellPeakPeriodS ?? undefined,
+            swellAvgPeriodS: sc.swellAvgPeriodS ?? undefined,
+            swellPeriodDiffS: sc.swellPeriodDiffS ?? undefined,
             windOffshoreAngleDeg,
           });
         }
@@ -378,7 +380,7 @@ export default function Page() {
     ];
     if (c.aqi !== null) parts.push(`AQI ${Math.round(c.aqi)}`);
     if (c.swellHeightM != null) parts.push(`${c.swellHeightM.toFixed(1)}m swell`);
-    if (c.swellPeriodS != null) parts.push(`${Math.round(c.swellPeriodS)}s period`);
+    if (c.swellPeakPeriodS != null) parts.push(`${Math.round(c.swellPeakPeriodS)}s peak`);
     if (c.windOffshoreAngleDeg != null) parts.push(`${Math.round(c.windOffshoreAngleDeg)}° from offshore`);
     if (c.timeISO) {
         const time = new Date(c.timeISO).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -386,6 +388,16 @@ export default function Page() {
     }
     return parts.join(" · ");
   }
+
+  const formatBestHour = (iso?: string) => {
+    if (!iso) return "Now";
+    const d = new Date(iso);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const day = isToday ? "Today" : d.toLocaleDateString(undefined, { weekday: 'short' });
+    const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return `${day} ${time}`;
+  };
 
   const mapSubtitle =
     mode === "trails"
@@ -544,7 +556,10 @@ export default function Page() {
             surfSpots={mode === "surf" ? surfSpots : []}
 	    onLoadTrailLine={loadLinesFor}
 	    onLoadGpxTrack={loadGpxTrack}
-	    onViewForecast={(name, transectId) => setForecastSpot({ name, transectId })}
+	    onViewForecast={(name, transectId, la, lo) => {
+            const spot = surfSpots.find(s => s.cdip_transect_id === transectId && s.lat === la);
+            setForecastSpot(spot ?? { name, cdip_transect_id: transectId, lat: la, lon: lo });
+        }}
           />
 
         </section>
@@ -577,6 +592,9 @@ export default function Page() {
                       Activity
                     </th>
                     <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
+                      Time
+                    </th>
+                    <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
                       Score
                     </th>
                     <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>
@@ -601,6 +619,7 @@ export default function Page() {
                                     {s.name}
                                 </button>
                             </td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>Now</td>
                             <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>{s.score ?? "—"}</td>
                             <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
                               {(s.reasons ?? []).slice(0, 3).join(", ")}
@@ -617,7 +636,7 @@ export default function Page() {
                                     )}
                                     {s.cdip_transect_id && (
                                         <button
-                                            onClick={() => setForecastSpot({ name: s.name, transectId: s.cdip_transect_id })}
+                                            onClick={() => setForecastSpot(s)}
                                             style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: "white" }}
                                         >
                                             Forecast
@@ -628,7 +647,7 @@ export default function Page() {
                           </tr>,
                           ...(isRating ? [
                             <tr key={`${s.name}-rating`}>
-                              <td colSpan={4} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
+                              <td colSpan={5} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
                                 <RatingRow
                                   name={s.name}
                                   busy={rateConditionsBusy}
@@ -656,6 +675,9 @@ export default function Page() {
                                     {a.name}
                                 </button>
                             </td>
+                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
+                                {formatBestHour(a.bestHourISO)}
+                            </td>
                             <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>{a.score}</td>
                             <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
                               {a.why.join(", ")}
@@ -675,7 +697,7 @@ export default function Page() {
                           </tr>,
                           ...(isRating ? [
                             <tr key={`${a.name}-rating`}>
-                              <td colSpan={4} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
+                              <td colSpan={5} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
                                 <RatingRow
                                   name={a.name}
                                   busy={rateConditionsBusy}
@@ -703,7 +725,13 @@ export default function Page() {
       {forecastSpot && (
         <SwellForecastModal
           name={forecastSpot.name}
-          transectId={forecastSpot.transectId}
+          transectId={forecastSpot.cdip_transect_id}
+          lat={forecastSpot.lat}
+          lon={forecastSpot.lon}
+          wind_offshore_min_deg={forecastSpot.wind_offshore_min_deg}
+          wind_offshore_max_deg={forecastSpot.wind_offshore_max_deg}
+          swell_min_deg={forecastSpot.swell_min_deg}
+          swell_max_deg={forecastSpot.swell_max_deg}
           onClose={() => setForecastSpot(null)}
         />
       )}

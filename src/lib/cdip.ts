@@ -3,7 +3,8 @@ type CdipLatest = {
   transect: string;
   time?: string;
   waveHs?: number; // meters
-  waveTp?: number; // seconds
+  waveTp?: number; // seconds (peak period)
+  waveTa?: number; // seconds (average period)
   waveDm?: number; // degrees (bulk mean direction)
   waveDp?: number; // degrees (peak direction)
   note?: string;
@@ -37,7 +38,7 @@ export async function fetchCdipLatest(transect: string): Promise<CdipLatest> {
   // time=all avoids “No features are in the requested subset”
   const url =
     `${base}?` +
-    `var=waveHs&var=waveTp&var=waveDm&var=waveDp&var=waveFlagPrimary` +
+    `var=waveHs&var=waveTp&var=waveTa&var=waveDm&var=waveDp&var=waveFlagPrimary` +
     `&time=all&accept=csv`;
 
   try {
@@ -86,6 +87,7 @@ export async function fetchCdipLatest(transect: string): Promise<CdipLatest> {
       time: best.time,
       waveHs: best.waveHs ? Number(best.waveHs) : undefined,
       waveTp: best.waveTp ? Number(best.waveTp) : undefined,
+      waveTa: best.waveTa ? Number(best.waveTa) : undefined,
       waveDm: best.waveDm ? Number(best.waveDm) : undefined,
       waveDp: best.waveDp ? Number(best.waveDp) : undefined,
     };
@@ -98,4 +100,3 @@ export async function fetchCdipLatest(transect: string): Promise<CdipLatest> {
     return v;
   }
 }
-

@@ -21,7 +21,9 @@ export type SurfSpotMarker = {
     windSpeedKts?: number;
     windDirDeg?: number;   // degrees
     swellHeightM?: number;
-    swellPeriodS?: number;
+    swellPeakPeriodS?: number; // Tp
+    swellAvgPeriodS?: number;  // Ta
+    swellPeriodDiffS?: number; // Tp - Ta
     swellDirDeg?: number;  // degrees
     waveHeightM?: number;
     wavePeriodS?: number;
@@ -40,7 +42,7 @@ export type MapViewProps = {
   surfSpots: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way" | "usfs", id: number | string, label: string) => void;
   onLoadGpxTrack?: (trackId: number, label: string) => void;
-  onViewForecast?: (name: string, transectId: string) => void;
+  onViewForecast?: (name: string, transectId: string, lat: number, lon: number) => void;
 };
 
 // IMPORTANT: resolve to the default export, not the module object
@@ -50,4 +52,3 @@ const MapViewDynamic = dynamic<MapViewProps>(
 );
 
 export default MapViewDynamic;
-

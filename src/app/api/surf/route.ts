@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { fetchCdipLatest } from "@/lib/cdip";
+import { scoreSurfSpot, SurfConditions, SurfSpotParams } from "@/lib/surfScoring";
 
 const DB_PATH = path.join(process.cwd(), "data", "surfspots.sqlite");
 
@@ -22,38 +23,8 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function inDegWindow(deg: number, minDeg: number, maxDeg: number) {
-  // Handles wrap-around windows like [330, 60]
-  const d = ((deg % 360) + 360) % 360;
-  const a = ((minDeg % 360) + 360) % 360;
-  const b = ((maxDeg % 360) + 360) % 360;
-  if (a <= b) return d >= a && d <= b;
-  return d >= a || d <= b;
-}
-
 function msToKnots(ms: number) {
   return ms * 1.943844;
-}
-
-// 16-point cardinal label for a bearing
-const CARDINAL_16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
-function toCardinal(deg: number): string {
-  const i = Math.round(((deg % 360) + 360) % 360 / 22.5) % 16;
-  return CARDINAL_16[i];
-}
-
-// Midpoint of an angular window (handles wrap-around)
-function circularCenter(minDeg: number, maxDeg: number): number {
-  const toR = (d: number) => (d * Math.PI) / 180;
-  const sinMean = (Math.sin(toR(minDeg)) + Math.sin(toR(maxDeg))) / 2;
-  const cosMean = (Math.cos(toR(minDeg)) + Math.cos(toR(maxDeg))) / 2;
-  return ((Math.atan2(sinMean, cosMean) * 180) / Math.PI + 360) % 360;
-}
-
-// Shortest angular distance between two bearings (0–180°)
-function angularDist(a: number, b: number): number {
-  const d = Math.abs(a - b) % 360;
-  return d > 180 ? 360 - d : d;
 }
 
 type ScoredSpot = {
@@ -76,17 +47,7 @@ type ScoredSpot = {
   distanceKm: number;
 
   // added by scoring
-  conditions?: {
-    windSpeedKts?: number;
-    windDirDeg?: number;
-    waveHeightM?: number;
-    wavePeriodS?: number;
-    waveDirDeg?: number;
-    swellHeightM?: number;
-    swellPeriodS?: number;
-    swellDirDeg?: number;
-    swellSource?: string;
-  };
+  conditions?: SurfConditions & { swellSource?: string };
 
   score?: number; // 0..100
   quality?: "poor" | "fair" | "good" | "excellent";
@@ -99,7 +60,6 @@ async function fetchJson(url: string, timeoutMs: number) {
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      // cache for 10 minutes to reduce API calls while you click around
       next: { revalidate: 600 },
       headers: { "User-Agent": "outdoor-activity-app/1.0 (surf-score)" },
     });
@@ -111,21 +71,18 @@ async function fetchJson(url: string, timeoutMs: number) {
   }
 }
 
-// Open-Meteo supports multiple coordinates: comma-separated latitude/longitude,
-// and returns an array of responses. :contentReference[oaicite:2]{index=2}
 async function fetchWindForSpots(spots: ScoredSpot[]) {
   const lats = spots.map((s) => s.lat).join(",");
   const lons = spots.map((s) => s.lon).join(",");
   const url =
     `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${encodeURIComponent(lats)}` +
-    `&longitude=${encodeURIComponent(lons)}` +
+    `?latitude=${lats}` +
+    `&longitude=${lons}` +
     `&current=wind_speed_10m,wind_direction_10m` +
     `&wind_speed_unit=ms` +
     `&timezone=UTC`;
 
   const json = await fetchJson(url, 9000);
-  // When multiple coords are used, response becomes a list of structures. :contentReference[oaicite:3]{index=3}
   return Array.isArray(json) ? json : [json];
 }
 
@@ -134,105 +91,14 @@ async function fetchMarineForSpots(spots: ScoredSpot[]) {
   const lons = spots.map((s) => s.lon).join(",");
   const url =
     `https://marine-api.open-meteo.com/v1/marine` +
-    `?latitude=${encodeURIComponent(lats)}` +
-    `&longitude=${encodeURIComponent(lons)}` +
+    `?latitude=${lats}` +
+    `&longitude=${lons}` +
     `&current=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period` +
     `&cell_selection=sea` +
     `&timezone=UTC`;
 
   const json = await fetchJson(url, 9000);
   return Array.isArray(json) ? json : [json];
-}
-
-function scoreSpot(spot: ScoredSpot): { score: number; quality: ScoredSpot["quality"]; reasons: string[] } {
-  const reasons: string[] = [];
-  let score = 50;
-
-  const c = spot.conditions ?? {};
-  const windDir = c.windDirDeg;
-  const windKts = c.windSpeedKts;
-
-  // Prefer dedicated swell vars; fall back to combined wave vars
-  const swellDir = c.swellDirDeg ?? c.waveDirDeg;
-  const swellH   = c.swellHeightM ?? c.waveHeightM;
-  const swellP   = c.swellPeriodS ?? c.wavePeriodS;
-
-  // ── Wind direction — continuous score relative to offshore window center ──
-  if (typeof windDir === "number" && spot.wind_offshore_min_deg != null && spot.wind_offshore_max_deg != null) {
-    const offCenter = circularCenter(spot.wind_offshore_min_deg, spot.wind_offshore_max_deg);
-    const dist = angularDist(windDir, offCenter);
-    // cos mapping: 0° (dead offshore) → +20, 90° (sideshore) → 0, 180° (onshore) → -20
-    const pts = Math.round(Math.cos((dist * Math.PI) / 180) * 20);
-    score += pts;
-
-    const label =
-      dist <= 30  ? "offshore" :
-      dist <= 70  ? "side-offshore" :
-      dist <= 110 ? "sideshore" :
-      dist <= 150 ? "side-onshore" :
-                    "onshore";
-    const icon = pts >= 12 ? "✅" : pts >= 0 ? "" : pts >= -10 ? "⚠️" : "❌";
-    reasons.push(`Wind ${toCardinal(windDir)} — ${label} (${Math.round(dist)}° from offshore) ${icon}`);
-  } else if (typeof windDir === "number") {
-    reasons.push(`Wind ${toCardinal(windDir)} (${Math.round(windDir)}°, no offshore window)`);
-  }
-
-  // ── Wind speed ────────────────────────────────────────────────────────────
-  if (typeof windKts === "number") {
-    if (windKts <= 5)       { score += 12; reasons.push(`${windKts.toFixed(0)} kts — light ✅`); }
-    else if (windKts <= 10) { score += 6;  reasons.push(`${windKts.toFixed(0)} kts — moderate`); }
-    else if (windKts <= 15) { score += 1;  reasons.push(`${windKts.toFixed(0)} kts — breezy`); }
-    else if (windKts <= 20) { score -= 8;  reasons.push(`${windKts.toFixed(0)} kts — windy ⚠️`); }
-    else                    { score -= 16; reasons.push(`${windKts.toFixed(0)} kts — very windy ❌`); }
-  }
-
-  // ── Swell: height + period + direction — one combined reason ─────────────
-  if (typeof swellH === "number" || typeof swellP === "number" || typeof swellDir === "number") {
-    const parts: string[] = [];
-
-    // Height
-    if (typeof swellH === "number") {
-      if (swellH < 0.5)       { score -= 10; parts.push(`${swellH.toFixed(1)}m (flat)`); }
-      else if (swellH < 1.2)  { score += 6;  parts.push(`${swellH.toFixed(1)}m`); }
-      else if (swellH < 2.2)  { score += 10; parts.push(`${swellH.toFixed(1)}m`); }
-      else                    { score -= 4;  parts.push(`${swellH.toFixed(1)}m (large)`); }
-    }
-
-    // Period
-    if (typeof swellP === "number") {
-      if (swellP >= 14)      { score += 12; parts.push(`${swellP.toFixed(0)}s`); }
-      else if (swellP >= 11) { score += 8;  parts.push(`${swellP.toFixed(0)}s`); }
-      else if (swellP >= 8)  { score += 3;  parts.push(`${swellP.toFixed(0)}s`); }
-      else                   { score -= 6;  parts.push(`${swellP.toFixed(0)}s (short)`); }
-    }
-
-    // Direction
-    if (typeof swellDir === "number") {
-      const dir = `${toCardinal(swellDir)} (${Math.round(swellDir)}°)`;
-      if (spot.swell_min_deg != null && spot.swell_max_deg != null) {
-        if (inDegWindow(swellDir, spot.swell_min_deg, spot.swell_max_deg)) {
-          score += 16;
-          parts.push(`from ${dir} ✅`);
-        } else {
-          score -= 8;
-          parts.push(`from ${dir} ⚠️`);
-        }
-      } else {
-        parts.push(`from ${dir}`);
-      }
-    }
-
-    reasons.push(`Swell: ${parts.join(", ")}`);
-  }
-
-  score = clamp(Math.round(score), 0, 100);
-
-  let quality: ScoredSpot["quality"] = "poor";
-  if (score >= 78)      quality = "excellent";
-  else if (score >= 60) quality = "good";
-  else if (score >= 42) quality = "fair";
-
-  return { score, quality, reasons };
 }
 
 // ---------- handler ----------
@@ -274,7 +140,6 @@ export async function GET(req: Request) {
     .sort((a: any, b: any) => a.distanceKm - b.distanceKm)
     .slice(0, limit);
 
-  // If no spots, return early
   if (spots0.length === 0) {
     return NextResponse.json({ lat, lon, count: 0, spots: [] });
   }
@@ -287,7 +152,6 @@ export async function GET(req: Request) {
     )
   );
 
-  // Fetch once per transect (parallel)
   const cdipByTransect = new Map<string, Awaited<ReturnType<typeof fetchCdipLatest>>>();
   await Promise.all(
     transects.map(async (t) => {
@@ -296,7 +160,6 @@ export async function GET(req: Request) {
     })
   );
 
-  // Fetch conditions in 2 batched calls (wind + marine)
   let windResp: any[] = [];
   let marineResp: any[] = [];
   const debug: any = {};
@@ -315,7 +178,6 @@ export async function GET(req: Request) {
     debug.marine = { ok: false, error: e?.message ?? String(e) };
   }
 
-  // Attach conditions by index (Open-Meteo returns in the same order as coordinates)
   const spots: ScoredSpot[] = spots0.map((s, i) => {
     const w = windResp[i]?.current;
     const m = marineResp[i]?.current;
@@ -330,28 +192,25 @@ export async function GET(req: Request) {
 
     const cdip = s.cdip_transect_id ? cdipByTransect.get(s.cdip_transect_id) : undefined;
 
-    // CDIP swell: use waveDm (bulk direction) + waveTp + waveHs
-    const cdipSwellHeightM =
-      cdip?.ok && typeof cdip.waveHs === "number" ? cdip.waveHs : undefined;
-    const cdipSwellPeriodS =
-      cdip?.ok && typeof cdip.waveTp === "number" ? cdip.waveTp : undefined;
-    const cdipSwellDirDeg =
-      cdip?.ok && typeof cdip.waveDm === "number" ? cdip.waveDm : undefined;
+    const cdipTp = cdip?.ok && typeof cdip.waveTp === "number" ? cdip.waveTp : undefined;
+    const cdipTa = cdip?.ok && typeof cdip.waveTa === "number" ? cdip.waveTa : undefined;
+    const cdipHs = cdip?.ok && typeof cdip.waveHs === "number" ? cdip.waveHs : undefined;
+    const cdipDm = cdip?.ok && typeof cdip.waveDm === "number" ? cdip.waveDm : undefined;
 
-    // Fall back to your existing marine/Open-Meteo values if CDIP missing
-    const swellHeightM =
-      cdipSwellHeightM ?? (typeof m?.swell_wave_height === "number" ? m.swell_wave_height : undefined);
-    const swellPeriodS =
-      cdipSwellPeriodS ?? (typeof m?.swell_wave_period === "number" ? m.swell_wave_period : undefined);
-    const swellDirDeg =
-      cdipSwellDirDeg ?? (typeof m?.swell_wave_direction === "number" ? m.swell_wave_direction : undefined);
+    const swellHeightM = cdipHs ?? (typeof m?.swell_wave_height === "number" ? m.swell_wave_height : undefined);
+    const swellPeakPeriodS = cdipTp ?? (typeof m?.swell_wave_period === "number" ? m.swell_wave_period : wavePeriodS);
+    const swellAvgPeriodS = cdipTa ?? undefined;
+    const swellDirDeg = cdipDm ?? (typeof m?.swell_wave_direction === "number" ? m.swell_wave_direction : undefined);
+
+    let swellPeriodDiffS = undefined;
+    if (swellPeakPeriodS != null && swellAvgPeriodS != null) {
+        swellPeriodDiffS = swellPeakPeriodS - swellAvgPeriodS;
+    }
 
     const swellSource =
       cdip?.ok ? `CDIP:${cdip.transect}` : "open-meteo";
 
-    const spot2: ScoredSpot = {
-      ...s,
-      conditions: {
+    const cond: SurfConditions = {
         windSpeedKts,
         windDirDeg,
         waveHeightM,
@@ -359,19 +218,22 @@ export async function GET(req: Request) {
         wavePeriodS,
         swellHeightM,
         swellDirDeg,
-        swellPeriodS,
-	swellSource,
-      },
+        swellPeakPeriodS,
+        swellAvgPeriodS,
+        swellPeriodDiffS,
     };
 
-    const { score, quality, reasons } = scoreSpot(spot2);
-    spot2.score = score;
-    spot2.quality = quality;
-    spot2.reasons = reasons;
-    return spot2;
+    const { score, quality, reasons } = scoreSurfSpot(s as SurfSpotParams, cond);
+    
+    return {
+      ...s,
+      conditions: { ...cond, swellSource },
+      score,
+      quality,
+      reasons,
+    };
   });
 
-  // Sort by score first, then distance (so the best pops to the top)
   spots.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.distanceKm - b.distanceKm);
 
   return NextResponse.json({
@@ -382,4 +244,3 @@ export async function GET(req: Request) {
     debug,
   });
 }
-

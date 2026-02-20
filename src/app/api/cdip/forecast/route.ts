@@ -27,7 +27,7 @@ export async function GET(req: Request) {
 
   const url =
     `${base}?` +
-    `var=waveHs&var=waveTp&var=waveDp&var=waveDm` +
+    `var=waveHs&var=waveTp&var=waveTa&var=waveDp&var=waveDm` +
     `&time=all` +
     `&accept=csv`;
 
@@ -48,6 +48,7 @@ export async function GET(req: Request) {
       time: r.time ?? r["time"] ?? "",
       waveHs: r.waveHs ? Number(r.waveHs) : null,
       waveTp: r.waveTp ? Number(r.waveTp) : null,
+      waveTa: r.waveTa ? Number(r.waveTa) : null,
       waveDp: r.waveDp ? Number(r.waveDp) : null,
       waveDm: r.waveDm ? Number(r.waveDm) : null,
     }))

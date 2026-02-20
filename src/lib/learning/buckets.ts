@@ -79,6 +79,10 @@ export function getPrecipIntensityBucket(precipIntensityMmh: number): string {
   return "heavy";
 }
 
+export function getPrecipTypeBucket(type: string): string {
+  return type;
+}
+
 export function getVisibilityBucket(visibilityKm: number): string {
   if (visibilityKm >= 10) return "excellent";
   if (visibilityKm >= 5) return "good";
@@ -105,6 +109,21 @@ export function getWindRainBucket(windBucket: string, rainBucket: string): strin
   return "marginal";
 }
 
+export function getTempWindBucket(tempBucket: string, windBucket: string): string {
+  if (tempBucket === "frigid") return "frigid_any";
+  if (tempBucket === "extreme_hot") return "extreme_hot_any";
+
+  const isWindy = windBucket === "windy" || windBucket === "stormy";
+
+  if (tempBucket === "freezing" || tempBucket === "cold") {
+    return isWindy ? "cold_windy" : "cold_calm";
+  }
+  if (tempBucket === "hot") {
+    return isWindy ? "hot_windy" : "hot_calm";
+  }
+  return "comfortable";
+}
+
 // ─── Surf-specific bucket functions ──────────────────────────────────────────
 
 export function getSwellHeightBucket(m: number): string {
@@ -120,6 +139,13 @@ export function getSwellPeriodBucket(s: number): string {
   if (s < 11) return "medium";
   if (s < 14) return "good";
   return "long";
+}
+
+export function getSwellPeriodDiffBucket(diff: number): string {
+  if (diff < 1) return "very_small";
+  if (diff < 3) return "small";
+  if (diff < 6) return "moderate";
+  return "large";
 }
 
 // windOffshoreAngleDeg: degrees from the offshore window centre (0=dead offshore, 180=onshore)
@@ -144,21 +170,6 @@ export function angularDist(a: number, b: number): number {
   return d > 180 ? 360 - d : d;
 }
 
-export function getTempWindBucket(tempBucket: string, windBucket: string): string {
-  if (tempBucket === "frigid") return "frigid_any";
-  if (tempBucket === "extreme_hot") return "extreme_hot_any";
-
-  const isWindy = windBucket === "windy" || windBucket === "stormy";
-
-  if (tempBucket === "freezing" || tempBucket === "cold") {
-    return isWindy ? "cold_windy" : "cold_calm";
-  }
-  if (tempBucket === "hot") {
-    return isWindy ? "hot_windy" : "hot_calm";
-  }
-  return "comfortable";
-}
-
 // ─── All-bucket extractor ─────────────────────────────────────────────────────
 
 export type BucketMap = Record<string, string>;
@@ -178,7 +189,7 @@ export function getBuckets(cond: Conditions): BucketMap {
     recentRain: getRecentRainBucket(cond.recentRainIn),
     aqi: getAqiBucket(cond.aqi),
     lightning: getLightningBucket(cond.cape),
-    precipType: cond.precipType, // already a bucket label
+    precipType: cond.precipType,
     precipIntensity: getPrecipIntensityBucket(cond.precipIntensityMmh),
     visibility: getVisibilityBucket(cond.visibilityKm),
     windRain: getWindRainBucket(windBucket, rainBucket),
@@ -196,7 +207,9 @@ export function getBuckets(cond: Conditions): BucketMap {
 
   // Surf-specific dims — only included when the caller supplies them
   if (cond.swellHeightM != null) result.swellHeight = getSwellHeightBucket(cond.swellHeightM);
-  if (cond.swellPeriodS != null) result.swellPeriod = getSwellPeriodBucket(cond.swellPeriodS);
+  if (cond.swellPeakPeriodS != null) result.swellPeakPeriod = getSwellPeriodBucket(cond.swellPeakPeriodS);
+  if (cond.swellAvgPeriodS != null) result.swellAvgPeriod = getSwellPeriodBucket(cond.swellAvgPeriodS);
+  if (cond.swellPeriodDiffS != null) result.swellPeriodDiff = getSwellPeriodDiffBucket(cond.swellPeriodDiffS);
   if (cond.windOffshoreAngleDeg != null) result.windOffshore = getWindOffshoreBucket(cond.windOffshoreAngleDeg);
 
   return result;
@@ -204,23 +217,23 @@ export function getBuckets(cond: Conditions): BucketMap {
 
 // ─── Feature vector (20 values) for linear / GP models ───────────────────────
 
-function clamp(v: number, lo: number, hi: number) {
+function clampVal(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
 export function extractFeatures(cond: Conditions): number[] {
-  const tempNorm = clamp((cond.tempF - 65) / 30, -2, 2);
-  const windSpeedNorm = clamp(cond.windMph / 30, 0, 2);
+  const tempNorm = clampVal((cond.tempF - 65) / 30, -2, 2);
+  const windSpeedNorm = clampVal(cond.windMph / 30, 0, 2);
   const windDirRad = (cond.windDirDeg * Math.PI) / 180;
   const windDirSin = Math.sin(windDirRad);
   const windDirCos = Math.cos(windDirRad);
   const rainProbNorm = cond.precipProb / 100;
   const cloudNorm = cond.cloudCover / 100;
   const humidityNorm = cond.humidity / 100;
-  const recentRainNorm = clamp(cond.recentRainIn, 0, 2);
-  const aqiNorm = clamp((cond.aqi ?? 0) / 150, 0, 2);
-  const lightningNorm = clamp(cond.cape / 1500, 0, 2);
-  const precipIntensityNorm = clamp(cond.precipIntensityMmh / 10, 0, 2);
+  const recentRainNorm = clampVal(cond.recentRainIn, 0, 2);
+  const aqiNorm = clampVal((cond.aqi ?? 0) / 150, 0, 2);
+  const lightningNorm = clampVal(cond.cape / 1500, 0, 2);
+  const precipIntensityNorm = clampVal(cond.precipIntensityMmh / 10, 0, 2);
   const visibilityNorm = 1 - Math.min(cond.visibilityKm / 10, 1); // inverted: 1=poor
 
   return [
@@ -264,9 +277,11 @@ export const BUCKET_DIMS: Array<{ key: string; label: string; buckets: string[] 
   { key: "visibility",       label: "Visibility",       buckets: ["excellent","good","moderate","poor"] },
   { key: "windRain",         label: "Wind × Rain",      buckets: ["good","ok","marginal","bad","terrible"] },
   { key: "tempWind",         label: "Temp × Wind",      buckets: ["frigid_any","cold_windy","cold_calm","comfortable","hot_calm","hot_windy","extreme_hot_any"] },
+  { key: "daylight",         label: "Daylight",         buckets: ["day", "night"] },
   // Surf-only dims (present only when conditions include surf data)
   { key: "swellHeight",      label: "Swell height",     buckets: ["flat","small","waist_high","head_high","overhead"] },
-  { key: "swellPeriod",      label: "Swell period",     buckets: ["short","medium","good","long"] },
+  { key: "swellPeakPeriod",  label: "Peak period",      buckets: ["short","medium","good","long"] },
+  { key: "swellAvgPeriod",   label: "Avg period",       buckets: ["short","medium","good","long"] },
+  { key: "swellPeriodDiff",  label: "Period spread",    buckets: ["very_small", "small", "moderate", "large"] },
   { key: "windOffshore",     label: "Wind vs offshore", buckets: ["offshore","side_offshore","sideshore","side_onshore","onshore"] },
-  { key: "daylight",         label: "Daylight",         buckets: ["day", "night"] },
 ];

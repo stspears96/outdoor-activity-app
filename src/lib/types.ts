@@ -52,7 +52,9 @@ export type Conditions = {
   timeISO?: string;          // ISO string for the specific hour
   // Surf-specific (optional — only present when rating a surf spot)
   swellHeightM?: number;         // metres
-  swellPeriodS?: number;         // seconds
+  swellPeakPeriodS?: number;     // seconds (Tp)
+  swellAvgPeriodS?: number;      // seconds (Ta)
+  swellPeriodDiffS?: number;     // seconds (Tp - Ta)
   windOffshoreAngleDeg?: number; // degrees from offshore window centre (0 = dead offshore)
 };
 
