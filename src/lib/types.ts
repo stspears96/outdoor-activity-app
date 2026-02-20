@@ -25,6 +25,26 @@ export type WeatherHourly = {
   windspeed_10m?: number[];
   windgusts_10m?: number[];
   cloudcover?: number[];
+  winddirection_10m?: number[];
+  relativehumidity_2m?: number[];
+  visibility?: number[];    // meters
+  weathercode?: number[];   // WMO weather code
+  cape?: number[];          // J/kg
+};
+
+export type Conditions = {
+  tempF: number;
+  windMph: number;
+  windDirDeg: number;        // 0–360 meteorological (0=N)
+  precipProb: number;        // 0–100
+  cloudCover: number;        // 0–100
+  humidity: number;          // 0–100
+  recentRainIn: number;      // inches past 24h
+  aqi: number | null;        // US AQI, null if unavailable
+  cape: number;              // J/kg
+  precipType: "none" | "drizzle" | "rain" | "snow" | "freezing_rain";
+  precipIntensityMmh: number; // mm/h (max over window)
+  visibilityKm: number;      // km (min over window)
 };
 
 export type WeatherResponse = {
@@ -40,6 +60,7 @@ export type RecommendationsResponse = {
   windowHours: number;
   generatedAtISO: string;
   activities: ActivityScore[];
+  conditions?: Conditions;
   hourlyPreview: Array<{
     timeISO: string;
     tempF?: number;
@@ -79,6 +100,7 @@ export type TrailItem = {
   trailClass?: number;
   elevationFt?: number;
   outboundUrl?: string;
+  gpxTrackId?: number;
 };
 
 export type TrailLine = {

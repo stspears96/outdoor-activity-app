@@ -1,18 +1,32 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   RecommendationsResponse,
   Place,
   PlaceType,
   TrailItem,
   TrailLine,
+  ActivityId,
 } from "@/lib/types";
+import type { LearningState } from "@/lib/learning/types";
 import { GeoButton } from "@/components/GeoButton";
 import { LocationSearch } from "@/components/LocationSearch";
 import { ActivityCard } from "@/components/ActivityCard";
 import MapViewDynamic from "@/components/MapViewDynamic";
 import SwellForecastModal from "@/components/SwellForecastModal";
+import { FeedbackPrompt } from "@/components/FeedbackPrompt";
+import { LearnedPrefsPanel } from "@/components/LearnedPrefsPanel";
+import {
+  loadState,
+  saveState,
+  defaultState,
+  addObservation,
+  setPendingSession,
+  clearPendingSession,
+  shouldShowFeedback,
+  getBlendedScore,
+} from "@/lib/learning/store";
 
 export default function Page() {
   const [lat, setLat] = useState<number | null>(null);
@@ -50,7 +64,7 @@ export default function Page() {
   const [selectedTrailLabel, setSelectedTrailLabel] = useState<string | null>(null);
   const [selectedTrailBusy, setSelectedTrailBusy] = useState(false);
   const [selectedTrailError, setSelectedTrailError] = useState<string | null>(null);
-  
+
   // ---- Surf spots ----
   const [surfSpots, setSurfSpots] = useState<any[]>([]);
   const [surfBusy, setSurfBusy] = useState(false);
@@ -58,6 +72,20 @@ export default function Page() {
 
   // ---- Swell forecast modal ----
   const [forecastSpot, setForecastSpot] = useState<{ name: string; transectId: string } | null>(null);
+
+  // ─── Learning state ────────────────────────────────────────────────────────
+  const [learningState, setLearningState] = useState<LearningState | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [showLearnedPrefs, setShowLearnedPrefs] = useState(false);
+
+  // Load learning state on mount
+  useEffect(() => {
+    const state = loadState();
+    setLearningState(state);
+    if (shouldShowFeedback(state)) {
+      setShowFeedback(true);
+    }
+  }, []);
 
   const canFetch = useMemo(
     () => typeof lat === "number" && typeof lon === "number",
@@ -84,7 +112,7 @@ export default function Page() {
     }
   }
 
-  async function fetchRecs() {
+  const fetchRecs = useCallback(async () => {
     if (!canFetch) return;
     setBusy(true);
     setError(null);
@@ -96,12 +124,27 @@ export default function Page() {
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       const json = (await res.json()) as RecommendationsResponse;
       setData(json);
+
+      // Store pending session for deferred feedback
+      if (json.conditions) {
+        const top3 = json.activities.slice(0, 3).map(a => a.id as ActivityId);
+        setLearningState(prev => {
+          if (!prev) return prev;
+          const updated = setPendingSession(prev, {
+            timestamp: Date.now(),
+            conditions: json.conditions!,
+            top3Activities: top3,
+          });
+          saveState(updated);
+          return updated;
+        });
+      }
     } catch (e: any) {
       setError(e?.message ?? "Failed to load recommendations.");
     } finally {
       setBusy(false);
     }
-  }
+  }, [canFetch, lat, lon, windowHours]);
 
   // Fetch recommendations when we first get a location and when windowHours changes
   useEffect(() => {
@@ -268,6 +311,82 @@ export default function Page() {
     }
   }
 
+  async function loadGpxTrack(trackId: number, label: string) {
+    if (!canFetch) return;
+
+    setSelectedTrailLabel(label);
+    setSelectedTrailError(null);
+    setSelectedTrailBusy(true);
+
+    try {
+      const res = await fetch(
+        `/api/gpx-track?trackId=${trackId}`
+      );
+      if (!res.ok) throw new Error(`GPX track request failed: ${res.status}`);
+      const json = await res.json();
+      setSelectedTrailLines(json.lines ?? []);
+    } catch (e: any) {
+      setSelectedTrailError(e?.message ?? "Failed to load GPX trail.");
+      setSelectedTrailLines([]);
+    } finally {
+      setSelectedTrailBusy(false);
+    }
+  }
+
+  // ─── Inline activity rating ────────────────────────────────────────────────
+  const [ratingTarget, setRatingTarget] = useState<ActivityId | null>(null);
+  const [ratingValue, setRatingValue] = useState(70);
+
+  function submitRating(activityId: ActivityId) {
+    if (!learningState || !data?.conditions) return;
+    const state = addObservation(learningState, activityId, data.conditions, ratingValue);
+    saveState(state);
+    setLearningState(state);
+    setRatingTarget(null);
+  }
+
+  // ─── Blended activity scores ───────────────────────────────────────────────
+  const blendedActivities = useMemo(() => {
+    if (!data) return [];
+    if (!learningState || !data.conditions) return data.activities;
+
+    return data.activities
+      .map(a => ({
+        ...a,
+        score: getBlendedScore(learningState, a.id as ActivityId, a.score, data.conditions!),
+      }))
+      .sort((a, b) => b.score - a.score);
+  }, [data, learningState]);
+
+  // ─── Feedback handlers ─────────────────────────────────────────────────────
+  function handleFeedbackSubmit(ratings: { activityId: ActivityId; rating: number }[]) {
+    if (!learningState?.pendingSession) return;
+    const { conditions } = learningState.pendingSession;
+
+    let state = learningState;
+    for (const { activityId, rating } of ratings) {
+      state = addObservation(state, activityId, conditions, rating);
+    }
+    state = clearPendingSession(state);
+    saveState(state);
+    setLearningState(state);
+    setShowFeedback(false);
+  }
+
+  function handleFeedbackSkip() {
+    if (!learningState) return;
+    const state = clearPendingSession(learningState);
+    saveState(state);
+    setLearningState(state);
+    setShowFeedback(false);
+  }
+
+  function handleReset() {
+    const state = defaultState();
+    saveState(state);
+    setLearningState(state);
+  }
+
   const mapSubtitle =
     mode === "trails"
       ? trailActivityType === "run"
@@ -345,6 +464,23 @@ export default function Page() {
         >
           {busy ? "Loading…" : "Refresh"}
         </button>
+
+        {learningState && (
+          <button
+            onClick={() => setShowLearnedPrefs(v => !v)}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #ddd",
+              cursor: "pointer",
+              background: showLearnedPrefs ? "#f0f9ff" : "white",
+              fontSize: 13,
+            }}
+          >
+            {showLearnedPrefs ? "Hide preferences" : "Learned preferences"}
+          </button>
+        )}
+
       </section>
 
       {!canFetch ? (
@@ -396,6 +532,7 @@ export default function Page() {
             trailLines={mode === "trails" ? selectedTrailLines : []}
             surfSpots={mode === "surf" ? surfSpots : []}
 	    onLoadTrailLine={loadLinesFor}
+	    onLoadGpxTrack={loadGpxTrack}
 	    onViewForecast={(name, transectId) => setForecastSpot({ name, transectId })}
           />
 
@@ -437,6 +574,11 @@ export default function Page() {
           <div style={{ marginTop: 18, color: "#444", fontSize: 13 }}>
             Generated: {new Date(data.generatedAtISO).toLocaleString()} · (
             {data.lat.toFixed(4)}, {data.lon.toFixed(4)})
+            {learningState && learningState.observations.length > 0 && (
+              <span style={{ marginLeft: 8, color: "#3b82f6" }}>
+                · {learningState.observations.length} rating{learningState.observations.length === 1 ? "" : "s"} learned
+              </span>
+            )}
           </div>
 
           <section
@@ -447,47 +589,109 @@ export default function Page() {
               marginTop: 12,
             }}
           >
-            {data.activities.filter((a) => a.id !== "walk").slice(0, 6).map((a) => (
-              <div
-                key={a.id}
-                onClick={() => {
-		  if (a.id === "hike") {
-		    setTrailActivityType("hike");
-		    setMode("trails");
-		    return;
-		  }
+            {blendedActivities.filter((a) => a.id !== "walk").slice(0, 6).map((a) => (
+              <div key={a.id}>
+                <div
+                  onClick={() => {
+		    if (a.id === "hike") { setTrailActivityType("hike"); setMode("trails"); return; }
+		    if (a.id === "run")  { setTrailActivityType("run");  setMode("trails"); return; }
+		    if (a.id === "mtb")  { setTrailActivityType("mtb");  setMode("trails"); return; }
+		    if (a.id === "surf") { setMode("surf"); return; }
+		    setMode("places");
+		    setSelectedPlaceType(placeTypeForActivity(a.id));
+		  }}
+                  style={{ cursor: "pointer" }}
+                  title={a.id === "hike" ? "Click to show nearby hiking trail markers" : "Click to show matching places on the map"}
+                >
+                  <ActivityCard a={a} />
+                </div>
 
-		  if (a.id === "run") {
-		    setTrailActivityType("run");
-		    setMode("trails");
-		    return;
-		  }
-
-		  if (a.id === "mtb") {
-		    setTrailActivityType("mtb");
-		    setMode("trails");
-		    return;
-		  }
-
-		  if (a.id === "surf") {
-		    setMode("surf");
-		    return;
-		  }
-
-		  setMode("places");
-		  setSelectedPlaceType(placeTypeForActivity(a.id));
-		}}
-                style={{ cursor: "pointer" }}
-                title={
-                  a.id === "hike"
-                    ? "Click to show nearby hiking trail markers"
-                    : "Click to show matching places on the map"
-                }
-              >
-                <ActivityCard a={a} />
+                {/* Inline rating */}
+                {learningState && data?.conditions && (
+                  ratingTarget === a.id ? (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        padding: "10px 12px",
+                        border: "1px solid #bae6fd",
+                        borderRadius: 10,
+                        background: "#f0f9ff",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={ratingValue}
+                          onChange={e => setRatingValue(Number(e.target.value))}
+                          style={{ flex: 1, accentColor: "#3b82f6" }}
+                        />
+                        <span style={{ fontWeight: 700, fontSize: 15, width: 28, textAlign: "right" }}>
+                          {ratingValue}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => submitRating(a.id as ActivityId)}
+                          style={{
+                            flex: 1,
+                            padding: "6px 0",
+                            borderRadius: 8,
+                            border: "none",
+                            background: "#3b82f6",
+                            color: "white",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setRatingTarget(null)}
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: 8,
+                            border: "1px solid #ddd",
+                            background: "white",
+                            fontSize: 13,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setRatingTarget(a.id as ActivityId); setRatingValue(70); }}
+                      style={{
+                        marginTop: 4,
+                        width: "100%",
+                        padding: "5px 0",
+                        borderRadius: 8,
+                        border: "1px solid #e5e7eb",
+                        background: "white",
+                        color: "#6b7280",
+                        fontSize: 12,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Rate this activity
+                    </button>
+                  )
+                )}
               </div>
             ))}
           </section>
+
+          {showLearnedPrefs && learningState && (
+            <LearnedPrefsPanel
+              betaParams={learningState.betaParams}
+              onReset={handleReset}
+            />
+          )}
 
           <section style={{ marginTop: 18 }}>
             <h2 style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>
@@ -578,7 +782,14 @@ export default function Page() {
           onClose={() => setForecastSpot(null)}
         />
       )}
+
+      {showFeedback && learningState?.pendingSession && (
+        <FeedbackPrompt
+          pendingSession={learningState.pendingSession}
+          onSubmit={handleFeedbackSubmit}
+          onSkip={handleFeedbackSkip}
+        />
+      )}
     </main>
   );
 }
-

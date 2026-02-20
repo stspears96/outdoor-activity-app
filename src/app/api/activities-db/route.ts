@@ -59,7 +59,7 @@ export async function GET(req: Request) {
   const rows = db
     .prepare(
       `
-      SELECT id, title, latitude, longitude, rating, tags, url
+      SELECT id, title, latitude, longitude, rating, tags, url, gpx_track_id
       FROM activities
       WHERE latitude BETWEEN ? AND ?
         AND longitude BETWEEN ? AND ?
@@ -81,6 +81,7 @@ export async function GET(req: Request) {
     rating: string;
     tags: string;
     url: string;
+    gpx_track_id: number;
   }>;
   db.close();
 
@@ -114,6 +115,7 @@ export async function GET(req: Request) {
       miles: parseMiles(tags),
       elevationFt: parseElevationFt(tags),
       outboundUrl: row.url,
+      gpxTrackId: row.gpx_track_id,
       _reviewCount: reviewCount,
       _stars: stars,
     });

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
+    "gpxparser": "^3.0.8",
     "leaflet": "^1.9.4",
     "next": "16.1.6",
     "react": "19.2.3",

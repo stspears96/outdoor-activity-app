@@ -105,6 +105,7 @@ export default function MapView(props: {
   trailLines?: TrailLine[];
   surfSpots?: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way" | "usfs", id: number | string, label: string) => void;
+  onLoadGpxTrack?: (trackId: number, label: string) => void;
   onViewForecast?: (name: string, transectId: string) => void;
 }) {
   const {
@@ -301,6 +302,24 @@ export default function MapView(props: {
                 <a href={t.osmUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: "inline-block", marginTop: 6 }}>
                   View on OpenStreetMap
                 </a>
+              ) : null}
+
+              {t.source === "outbound" && t.gpxTrackId ? (
+                <button
+                  onClick={() => props.onLoadGpxTrack?.(t.gpxTrackId!, t.name)}
+                  style={{
+                    marginTop: 8,
+                    padding: "6px 8px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: "white",
+                    cursor: "pointer",
+                    fontSize: 12,
+                    display: "block",
+                  }}
+                >
+                  Load GPX trail
+                </button>
               ) : null}
 
               {t.source !== "outbound" && t.source === "usfs" ? (
