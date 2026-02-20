@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { ActivityId, RecommendationsResponse, WeatherResponse, TrailItem } from "@/lib/types";
 import { computeActivityScore } from "@/lib/scoring";
 import { computeConditions } from "@/lib/weather";
+import { getScoredSurfSpots } from "@/lib/surfService";
 
 function mapDbActivitiesToActivityId(dbActivities: string): ActivityId | null {
     if (!dbActivities) return null;
@@ -17,9 +18,6 @@ function findHourIndex(times: string[], target: string): number {
   return times.findIndex(t => t === target);
 }
 
-/**
- * Normalizes coordinate to a fixed precision to help with batching
- */
 function normCoord(c: number): number {
     return Math.round(c * 1000) / 1000;
 }
@@ -38,23 +36,14 @@ export async function GET(req: Request) {
 
   const wh = Number.isFinite(windowHours) ? Math.max(1, Math.min(24, windowHours)) : 6;
 
-  const baseUrl =
-    process.env.NEXT_PUBLIC_BASE_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-
   const includeSurf = !activityType || activityType === "all" || activityType === "surf";
   const includeDb = !activityType || activityType === "all" || activityType !== "surf";
 
-  let activitiesUrl = `${baseUrl}/api/activities-db?lat=${lat}&lon=${lon}&radiusKm=${radiusKm}`;
-  if (activityType && activityType !== "all" && activityType !== "surf") {
-    activitiesUrl += `&activityType=${activityType}`;
-  }
-
-  // Phase 1: Fetch candidate activities
-  const [aqiRes, activitiesRes, surfRes] = await Promise.allSettled([
-    fetch(`${baseUrl}/api/air-quality?lat=${lat}&lon=${lon}`, { next: { revalidate: 600 } }),
-    includeDb ? fetch(activitiesUrl) : Promise.resolve(null),
-    includeSurf ? fetch(`${baseUrl}/api/surf?lat=${lat}&lon=${lon}&radiusKm=60`) : Promise.resolve(null),
+  // Phase 1: Fetch candidate activities from DB and Surf Service
+  const [aqiRes, activitiesRes, surfSpots] = await Promise.allSettled([
+    fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/air-quality?lat=${lat}&lon=${lon}`, { next: { revalidate: 600 } }),
+    includeDb ? fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/activities-db?lat=${lat}&lon=${lon}&radiusKm=${radiusKm}${activityType && activityType !== "all" && activityType !== "surf" ? `&activityType=${activityType}` : ""}`) : Promise.resolve(null),
+    includeSurf ? getScoredSurfSpots(lat, lon, 60) : Promise.resolve([]),
   ]);
 
   let aqi: number | null = null;
@@ -68,68 +57,57 @@ export async function GET(req: Request) {
       const data = await activitiesRes.value.json();
       rawActivities = rawActivities.concat(data.items ?? []);
   }
-  if (surfRes.status === "fulfilled" && surfRes.value?.ok) {
-      const data = await surfRes.value.json();
-      const spots = (data.spots ?? []).map((s: any) => ({
-          ...s,
-          activityId: "surf",
-          isSurf: true,
-      }));
-      rawActivities = rawActivities.concat(spots);
-  }
+  
+  const surfList = surfSpots.status === "fulfilled" ? surfSpots.value : [];
+  const candidates = [
+      ...rawActivities.map(a => ({ ...a, activityId: mapDbActivitiesToActivityId(a.activities!), isSurf: false })),
+      ...surfList.map(s => ({ ...s, activityId: "surf", isSurf: true }))
+  ].filter(a => !!a.activityId);
 
-  const candidates = rawActivities.map(a => {
-      const activityId = a.isSurf ? "surf" : mapDbActivitiesToActivityId(a.activities!);
-      if (!activityId) return null;
-      return { ...a, activityId };
-  }).filter(Boolean) as any[];
-
-  // Phase 2: Batch weather using INDEX-based matching (Open-Meteo snaps coords)
+  // Phase 2: Batch weather using INDEX-based matching
   const locsArray: { lat: number, lon: number }[] = [];
   const locKeyToIndex = new Map<string, number>();
 
-  // Add search center as index 0
   const centerKey = `${normCoord(lat)},${normCoord(lon)}`;
   locsArray.push({ lat, lon });
   locKeyToIndex.set(centerKey, 0);
 
-  // Link each activity to an index in the weather batch
   const activityToLocIndex: number[] = [];
   for (const a of candidates) {
       const key = `${normCoord(a.lat)},${normCoord(a.lon)}`;
       let idx = locKeyToIndex.get(key);
-      
       if (idx === undefined && locsArray.length < 50) {
           idx = locsArray.length;
           locsArray.push({ lat: a.lat, lon: a.lon });
           locKeyToIndex.set(key, idx);
       }
-      
-      // Fallback to center if we're over the 50-coord batch limit
       activityToLocIndex.push(idx ?? 0);
   }
 
   const batchLat = locsArray.map(l => l.lat).join(",");
   const batchLon = locsArray.map(l => l.lon).join(",");
   
-  const weatherRes = await fetch(`${baseUrl}/api/weather?lat=${batchLat}&lon=${batchLon}`);
+  const weatherRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/weather?lat=${batchLat}&lon=${batchLon}`);
   if (!weatherRes.ok) {
       return NextResponse.json({ error: "Failed to load weather batch" }, { status: 502 });
   }
   
   const weatherData = await weatherRes.json();
-  // Open-Meteo returns a single object if only 1 coord is requested, else an array
   const weatherArray = Array.isArray(weatherData) ? weatherData : [weatherData];
-  
   const searchWeather = weatherArray[0];
 
-  // Phase 3: Score each activity with its specific weather from the batch
+  // Phase 3: Score each activity
   const scoredActivities = candidates.map((activity, i) => {
     const weatherIdx = activityToLocIndex[i];
     const specificWeather = weatherArray[weatherIdx] || searchWeather;
     
     const score = computeActivityScore(activity.activityId, activity.name, specificWeather, wh);
     
+    // For surf spots, overwrite the reasoning with the detailed surf report (Swell, Tide, offshore wind)
+    if (activity.isSurf && activity.reasons) {
+        score.why = activity.reasons;
+    }
+
     let bestHourConditions = null;
     if (score.bestHourISO) {
         const hourIdx = findHourIndex(specificWeather.hourly.time, score.bestHourISO);
@@ -160,6 +138,8 @@ export async function GET(req: Request) {
                 bestHourConditions.swellAvgPeriodS = activity.conditions.swellAvgPeriodS;
                 bestHourConditions.swellPeriodDiffS = activity.conditions.swellPeriodDiffS;
                 bestHourConditions.windOffshoreAngleDeg = activity.conditions.windOffshoreAngleDeg;
+                bestHourConditions.tideHeightFt = activity.conditions.tideHeightFt;
+                bestHourConditions.tideState = activity.conditions.tideState;
             }
         }
     }
@@ -175,7 +155,7 @@ export async function GET(req: Request) {
         wind_offshore_max_deg: activity.wind_offshore_max_deg,
         swell_min_deg: activity.swell_min_deg,
         swell_max_deg: activity.swell_max_deg,
-        reasons: activity.reasons
+        tide_preference: activity.tide_preference,
     };
   }).filter((a): a is NonNullable<typeof a> => a !== null);
 

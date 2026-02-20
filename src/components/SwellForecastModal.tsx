@@ -25,6 +25,11 @@ type CdipPoint = {
   waveDm: number | null;
 };
 
+type TidePoint = {
+    timeISO: string;
+    heightFt: number;
+};
+
 type ChartRow = {
   time: number; // epoch ms
   label: string; // formatted time
@@ -35,6 +40,7 @@ type ChartRow = {
   dp: number | null; // peak direction (deg)
   windDir: number | null; // wind direction (deg)
   windSpeed: number | null; // wind speed (kts)
+  tideHeight: number | null;
   score: number | null;
   color: string | null;
 };
@@ -62,8 +68,7 @@ function lerpAngle(a: number, b: number, t: number) {
 const CustomLegend = (props: any) => {
   const { payload } = props;
   
-  // Custom sorting: Observed Hs, Forecast Hs, Peak Period, Avg Period
-  const order = ["Observed Hs (ft)", "Forecast Hs (ft)", "Peak Period (s)", "Avg Period (s)"];
+  const order = ["Observed Hs (ft)", "Forecast Hs (ft)", "Tide (ft)", "Peak Period (s)", "Avg Period (s)"];
   const sortedPayload = [...payload].sort((a, b) => order.indexOf(a.value) - order.indexOf(b.value));
 
   return (
@@ -110,9 +115,10 @@ export default function SwellForecastModal(props: {
   wind_offshore_max_deg?: number | null;
   swell_min_deg?: number | null;
   swell_max_deg?: number | null;
+  tide_preference?: string | null;
   onClose: () => void;
 }) {
-  const { name, transectId, lat, lon, onClose, wind_offshore_min_deg, wind_offshore_max_deg, swell_min_deg, swell_max_deg } = props;
+  const { name, transectId, lat, lon, onClose, wind_offshore_min_deg, wind_offshore_max_deg, swell_min_deg, swell_max_deg, tide_preference } = props;
   const [data, setData] = useState<ChartRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,10 +135,11 @@ export default function SwellForecastModal(props: {
       setNowMs(currentTime);
 
       try {
-        const [nowcastRes, forecastRes, weatherRes] = await Promise.all([
+        const [nowcastRes, forecastRes, weatherRes, tideRes] = await Promise.all([
           fetch(`/api/cdip/alongshore?transect=${encodeURIComponent(transectId)}&hours=72`),
           fetch(`/api/cdip/forecast?transect=${encodeURIComponent(transectId)}`),
           fetch(`/api/weather?lat=${lat}&lon=${lon}`),
+          fetch(`/api/tides?lat=${lat}&lon=${lon}`),
         ]);
 
         if (!nowcastRes.ok) throw new Error(`Nowcast request failed: ${nowcastRes.status}`);
@@ -149,6 +156,12 @@ export default function SwellForecastModal(props: {
         let weather: WeatherResponse | null = null;
         if (weatherRes.ok) {
           weather = await weatherRes.json();
+        }
+
+        let tides: TidePoint[] = [];
+        if (tideRes.ok) {
+            const tideJson = await tideRes.json();
+            tides = tideJson.predictions ?? [];
         }
 
         if (cancelled) return;
@@ -172,6 +185,7 @@ export default function SwellForecastModal(props: {
                 dp: null,
                 windDir: null,
                 windSpeed: null,
+                tideHeight: null,
                 score: null,
                 color: null,
             });
@@ -228,6 +242,11 @@ export default function SwellForecastModal(props: {
                     }
                 }
             }
+            
+            // Find tide (predictions are hourly)
+            const tMatch = tides.find(t => Math.abs(Date.parse(t.timeISO) - row.time) < 1800000);
+            if (tMatch) row.tideHeight = tMatch.heightFt;
+
             if (row.tp != null && row.windDir != null) {
                 const cond: SurfConditions = {
                     windSpeedKts: row.windSpeed != null ? row.windSpeed * 0.868976 : undefined,
@@ -237,12 +256,14 @@ export default function SwellForecastModal(props: {
                     swellAvgPeriodS: row.ta ?? undefined,
                     swellPeriodDiffS: (row.tp != null && row.ta != null) ? (row.tp - row.ta) : undefined,
                     swellDirDeg: row.dp ?? undefined,
+                    tideHeightFt: row.tideHeight ?? undefined,
                 };
                 const { score, quality } = scoreSurfSpot({
                     wind_offshore_min_deg,
                     wind_offshore_max_deg,
                     swell_min_deg,
-                    swell_max_deg
+                    swell_max_deg,
+                    tide_preference
                 }, cond);
                 row.score = score;
                 row.color = qualityToColor(quality);
@@ -257,7 +278,7 @@ export default function SwellForecastModal(props: {
     }
     load();
     return () => { cancelled = true; };
-  }, [transectId, lat, lon, wind_offshore_min_deg, wind_offshore_max_deg, swell_min_deg, swell_max_deg]);
+  }, [transectId, lat, lon, wind_offshore_min_deg, wind_offshore_max_deg, swell_min_deg, swell_max_deg, tide_preference]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
@@ -413,7 +434,7 @@ export default function SwellForecastModal(props: {
                 <YAxis
                   yAxisId="hs"
                   label={{
-                    value: "Height (ft)",
+                    value: "Height / Tide (ft)",
                     angle: -90,
                     position: "insideLeft",
                     style: { fontSize: 11 },
@@ -438,6 +459,7 @@ export default function SwellForecastModal(props: {
                   formatter={(value, name) => {
                     const v = Number(value);
                     if (name.includes("Hs")) return [v.toFixed(1) + " ft", name];
+                    if (name.includes("Tide")) return [v.toFixed(1) + " ft", name];
                     if (name.includes("Period")) return [v.toFixed(1) + " s", name];
                     return [value, name];
                   }}
@@ -463,6 +485,16 @@ export default function SwellForecastModal(props: {
                   stroke="#e05530"
                   strokeWidth={2}
                   strokeDasharray="6 3"
+                  dot={false}
+                  connectNulls
+                />
+                <Line
+                  yAxisId="hs"
+                  type="step"
+                  dataKey="tideHeight"
+                  name="Tide (ft)"
+                  stroke="#94a3b8"
+                  strokeWidth={2}
                   dot={false}
                   connectNulls
                 />

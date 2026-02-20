@@ -40,6 +40,8 @@ export type SurfConditions = {
   swellAvgPeriodS?: number;
   swellPeriodDiffS?: number;
   swellDirDeg?: number;
+  tideHeightFt?: number;
+  tideState?: "rising" | "falling" | "stable";
 };
 
 export type SurfSpotParams = {
@@ -47,6 +49,7 @@ export type SurfSpotParams = {
   wind_offshore_max_deg?: number | null;
   swell_min_deg?: number | null;
   swell_max_deg?: number | null;
+  tide_preference?: string | null;
 };
 
 export type SurfQuality = "poor" | "fair" | "good" | "excellent";
@@ -131,6 +134,29 @@ export function scoreSurfSpot(
     if (parts.length > 0) {
         reasons.push(`Swell: ${parts.join(", ")}`);
     }
+  }
+
+  // ── Tide ──
+  if (typeof cond.tideHeightFt === "number" && params.tide_preference && params.tide_preference !== "any") {
+    const h = cond.tideHeightFt;
+    const pref = params.tide_preference;
+    let tidePts = 0;
+
+    if (pref === "low") {
+      if (h < 2.5)      { tidePts = 10; reasons.push(`Tide ${h.toFixed(1)}ft — optimal low ✅`); }
+      else if (h < 4.5) { tidePts = 0;  reasons.push(`Tide ${h.toFixed(1)}ft — getting high`); }
+      else              { tidePts = -10; reasons.push(`Tide ${h.toFixed(1)}ft — too high ⚠️`); }
+    } else if (pref === "high") {
+      if (h > 4.5)      { tidePts = 10; reasons.push(`Tide ${h.toFixed(1)}ft — optimal high ✅`); }
+      else if (h > 2.5) { tidePts = 0;  reasons.push(`Tide ${h.toFixed(1)}ft — getting low`); }
+      else              { tidePts = -10; reasons.push(`Tide ${h.toFixed(1)}ft — too low ⚠️`); }
+    } else if (pref === "mid") {
+      if (h >= 2.5 && h <= 4.5) { tidePts = 10; reasons.push(`Tide ${h.toFixed(1)}ft — optimal mid ✅`); }
+      else                      { tidePts = -5;  reasons.push(`Tide ${h.toFixed(1)}ft — outside mid range`); }
+    }
+    score += tidePts;
+  } else if (typeof cond.tideHeightFt === "number") {
+    reasons.push(`Tide: ${cond.tideHeightFt.toFixed(1)}ft ${cond.tideState ? `(${cond.tideState})` : ""}`);
   }
 
   score = clamp(Math.round(score), 0, 100);

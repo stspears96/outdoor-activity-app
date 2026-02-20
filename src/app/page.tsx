@@ -381,6 +381,7 @@ export default function Page() {
     if (c.aqi !== null) parts.push(`AQI ${Math.round(c.aqi)}`);
     if (c.swellHeightM != null) parts.push(`${c.swellHeightM.toFixed(1)}m swell`);
     if (c.swellPeakPeriodS != null) parts.push(`${Math.round(c.swellPeakPeriodS)}s peak`);
+    if (c.tideHeightFt != null) parts.push(`Tide ${c.tideHeightFt.toFixed(1)}ft${c.tideState ? ` (${c.tideState})` : ''}`);
     if (c.windOffshoreAngleDeg != null) parts.push(`${Math.round(c.windOffshoreAngleDeg)}° from offshore`);
     if (c.timeISO) {
         const time = new Date(c.timeISO).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -732,6 +733,7 @@ export default function Page() {
           wind_offshore_max_deg={forecastSpot.wind_offshore_max_deg}
           swell_min_deg={forecastSpot.swell_min_deg}
           swell_max_deg={forecastSpot.swell_max_deg}
+          tide_preference={forecastSpot.tide_preference}
           onClose={() => setForecastSpot(null)}
         />
       )}
