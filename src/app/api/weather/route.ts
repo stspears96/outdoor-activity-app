@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import type { WeatherResponse } from "@/lib/types";
 
 // Open-Meteo returns metric by default; request Fahrenheit + mph
-function buildUrl(lat: number, lon: number) {
+function buildUrl(lat: string, lon: string) {
   const params = new URLSearchParams({
-    latitude: String(lat),
-    longitude: String(lon),
+    latitude: lat,
+    longitude: lon,
     hourly: [
       "temperature_2m",
       "apparent_temperature",
@@ -32,14 +32,14 @@ function buildUrl(lat: number, lon: number) {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const lat = Number(searchParams.get("lat"));
-  const lon = Number(searchParams.get("lon"));
+  const latParam = searchParams.get("lat");
+  const lonParam = searchParams.get("lon");
 
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    return NextResponse.json({ error: "Missing or invalid lat/lon" }, { status: 400 });
+  if (!latParam || !lonParam) {
+    return NextResponse.json({ error: "Missing lat/lon" }, { status: 400 });
   }
 
-  const url = buildUrl(lat, lon);
+  const url = buildUrl(latParam, lonParam);
 
   const res = await fetch(url, {
     // Next.js caching: revalidate every 10 minutes
@@ -48,10 +48,13 @@ export async function GET(req: Request) {
   });
 
   if (!res.ok) {
-    return NextResponse.json({ error: `Weather fetch failed: ${res.status}` }, { status: 502 });
+    const text = await res.text();
+    return NextResponse.json({ error: `Weather fetch failed: ${res.status}`, detail: text }, { status: 502 });
   }
 
-  const data = (await res.json()) as WeatherResponse;
+  const data = await res.json();
+  // If multiple coordinates are provided, Open-Meteo returns an array.
+  // If one is provided, it returns an object.
+  // We return exactly what it gives us.
   return NextResponse.json(data);
 }
-

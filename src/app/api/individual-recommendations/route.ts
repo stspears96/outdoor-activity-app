@@ -17,6 +17,13 @@ function findHourIndex(times: string[], target: string): number {
   return times.findIndex(t => t === target);
 }
 
+/**
+ * Normalizes coordinate to a fixed precision to help with batching
+ */
+function normCoord(c: number): number {
+    return Math.round(c * 1000) / 1000;
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const lat = Number(searchParams.get("lat"));
@@ -43,23 +50,12 @@ export async function GET(req: Request) {
     activitiesUrl += `&activityType=${activityType}`;
   }
 
-  const fetchers: Promise<any>[] = [
-    fetch(`${baseUrl}/api/weather?lat=${lat}&lon=${lon}`, { next: { revalidate: 600 } }),
+  // Phase 1: Fetch candidate activities
+  const [aqiRes, activitiesRes, surfRes] = await Promise.allSettled([
     fetch(`${baseUrl}/api/air-quality?lat=${lat}&lon=${lon}`, { next: { revalidate: 600 } }),
-  ];
-
-  if (includeDb) fetchers.push(fetch(activitiesUrl));
-  if (includeSurf) fetchers.push(fetch(`${baseUrl}/api/surf?lat=${lat}&lon=${lon}&radiusKm=60`));
-
-  const results = await Promise.allSettled(fetchers);
-  
-  const weatherRes = results[0];
-  const aqiRes = results[1];
-  
-  if (weatherRes.status === "rejected" || !weatherRes.value.ok) {
-    return NextResponse.json({ error: "Failed to load weather" }, { status: 502 });
-  }
-  const weather = (await weatherRes.value.json()) as WeatherResponse;
+    includeDb ? fetch(activitiesUrl) : Promise.resolve(null),
+    includeSurf ? fetch(`${baseUrl}/api/surf?lat=${lat}&lon=${lon}&radiusKm=60`) : Promise.resolve(null),
+  ]);
 
   let aqi: number | null = null;
   if (aqiRes.status === "fulfilled" && aqiRes.value.ok) {
@@ -67,63 +63,93 @@ export async function GET(req: Request) {
     aqi = typeof aqiData.aqi === "number" ? aqiData.aqi : null;
   }
 
-  let individualActivities: any[] = [];
+  let rawActivities: any[] = [];
+  if (activitiesRes.status === "fulfilled" && activitiesRes.value?.ok) {
+      const data = await activitiesRes.value.json();
+      rawActivities = rawActivities.concat(data.items ?? []);
+  }
+  if (surfRes.status === "fulfilled" && surfRes.value?.ok) {
+      const data = await surfRes.value.json();
+      const spots = (data.spots ?? []).map((s: any) => ({
+          ...s,
+          activityId: "surf",
+          isSurf: true,
+      }));
+      rawActivities = rawActivities.concat(spots);
+  }
+
+  const candidates = rawActivities.map(a => {
+      const activityId = a.isSurf ? "surf" : mapDbActivitiesToActivityId(a.activities!);
+      if (!activityId) return null;
+      return { ...a, activityId };
+  }).filter(Boolean) as any[];
+
+  // Phase 2: Batch weather using INDEX-based matching (Open-Meteo snaps coords)
+  const locsArray: { lat: number, lon: number }[] = [];
+  const locKeyToIndex = new Map<string, number>();
+
+  // Add search center as index 0
+  const centerKey = `${normCoord(lat)},${normCoord(lon)}`;
+  locsArray.push({ lat, lon });
+  locKeyToIndex.set(centerKey, 0);
+
+  // Link each activity to an index in the weather batch
+  const activityToLocIndex: number[] = [];
+  for (const a of candidates) {
+      const key = `${normCoord(a.lat)},${normCoord(a.lon)}`;
+      let idx = locKeyToIndex.get(key);
+      
+      if (idx === undefined && locsArray.length < 50) {
+          idx = locsArray.length;
+          locsArray.push({ lat: a.lat, lon: a.lon });
+          locKeyToIndex.set(key, idx);
+      }
+      
+      // Fallback to center if we're over the 50-coord batch limit
+      activityToLocIndex.push(idx ?? 0);
+  }
+
+  const batchLat = locsArray.map(l => l.lat).join(",");
+  const batchLon = locsArray.map(l => l.lon).join(",");
   
-  if (includeDb) {
-      const dbIdx = 2;
-      const res = results[dbIdx];
-      if (res && res.status === "fulfilled" && res.value.ok) {
-          const data = await res.value.json();
-          individualActivities = individualActivities.concat(data.items ?? []);
-      }
+  const weatherRes = await fetch(`${baseUrl}/api/weather?lat=${batchLat}&lon=${batchLon}`);
+  if (!weatherRes.ok) {
+      return NextResponse.json({ error: "Failed to load weather batch" }, { status: 502 });
   }
+  
+  const weatherData = await weatherRes.json();
+  // Open-Meteo returns a single object if only 1 coord is requested, else an array
+  const weatherArray = Array.isArray(weatherData) ? weatherData : [weatherData];
+  
+  const searchWeather = weatherArray[0];
 
-  if (includeSurf) {
-      const surfIdx = includeDb ? 3 : 2;
-      const res = results[surfIdx];
-      if (res && res.status === "fulfilled" && res.value.ok) {
-          const data = await res.value.json();
-          const spots = (data.spots ?? []).map((s: any) => ({
-              ...s,
-              activityId: "surf",
-              isSurf: true,
-          }));
-          individualActivities = individualActivities.concat(spots);
-      }
-  }
-
-  const scoredActivities = individualActivities.map(activity => {
-    let activityId: ActivityId | null = null;
-    if (activity.isSurf) {
-        activityId = "surf";
-    } else {
-        activityId = mapDbActivitiesToActivityId(activity.activities!);
-    }
+  // Phase 3: Score each activity with its specific weather from the batch
+  const scoredActivities = candidates.map((activity, i) => {
+    const weatherIdx = activityToLocIndex[i];
+    const specificWeather = weatherArray[weatherIdx] || searchWeather;
     
-    if (!activityId) return null;
-    
-    const score = computeActivityScore(activityId, activity.name, weather, wh);
+    const score = computeActivityScore(activity.activityId, activity.name, specificWeather, wh);
     
     let bestHourConditions = null;
     if (score.bestHourISO) {
-        const hourIdx = findHourIndex(weather.hourly.time, score.bestHourISO);
+        const hourIdx = findHourIndex(specificWeather.hourly.time, score.bestHourISO);
         if (hourIdx !== -1) {
             const miniHourly = {
-                time: [weather.hourly.time[hourIdx]],
-                temperature_2m: [weather.hourly.temperature_2m?.[hourIdx] ?? 65],
-                apparent_temperature: [weather.hourly.apparent_temperature?.[hourIdx] ?? 65],
-                precipitation_probability: [weather.hourly.precipitation_probability?.[hourIdx] ?? 0],
-                precipitation: [weather.hourly.precipitation?.[hourIdx] ?? 0],
-                windspeed_10m: [weather.hourly.windspeed_10m?.[hourIdx] ?? 0],
-                winddirection_10m: [weather.hourly.winddirection_10m?.[hourIdx] ?? 180],
-                cloudcover: [weather.hourly.cloudcover?.[hourIdx] ?? 50],
-                relativehumidity_2m: [weather.hourly.relativehumidity_2m?.[hourIdx] ?? 50],
-                visibility: [weather.hourly.visibility?.[hourIdx] ?? 10000],
-                weathercode: [weather.hourly.weathercode?.[hourIdx] ?? 0],
-                cape: [weather.hourly.cape?.[hourIdx] ?? 0],
+                time: [specificWeather.hourly.time[hourIdx]],
+                temperature_2m: [specificWeather.hourly.temperature_2m?.[hourIdx] ?? 65],
+                apparent_temperature: [specificWeather.hourly.apparent_temperature?.[hourIdx] ?? 65],
+                precipitation_probability: [specificWeather.hourly.precipitation_probability?.[hourIdx] ?? 0],
+                precipitation: [specificWeather.hourly.precipitation?.[hourIdx] ?? 0],
+                windspeed_10m: [specificWeather.hourly.windspeed_10m?.[hourIdx] ?? 0],
+                winddirection_10m: [specificWeather.hourly.winddirection_10m?.[hourIdx] ?? 180],
+                cloudcover: [specificWeather.hourly.cloudcover?.[hourIdx] ?? 50],
+                relativehumidity_2m: [specificWeather.hourly.relativehumidity_2m?.[hourIdx] ?? 50],
+                visibility: [specificWeather.hourly.visibility?.[hourIdx] ?? 10000],
+                weathercode: [specificWeather.hourly.weathercode?.[hourIdx] ?? 0],
+                cape: [specificWeather.hourly.cape?.[hourIdx] ?? 0],
             };
-            const sunrise = weather.daily?.sunrise?.[hourIdx % 2]; // Approximation or pass full daily
-            const sunset = weather.daily?.sunset?.[hourIdx % 2];
+            const sunrise = specificWeather.daily?.sunrise?.[0];
+            const sunset = specificWeather.daily?.sunset?.[0];
             
             bestHourConditions = computeConditions(miniHourly, 1, aqi, sunrise, sunset);
             bestHourConditions.timeISO = score.bestHourISO;
@@ -153,19 +179,19 @@ export async function GET(req: Request) {
     };
   }).filter((a): a is NonNullable<typeof a> => a !== null);
 
-  const conditions = computeConditions(weather.hourly, wh, aqi, weather.daily?.sunrise?.[0], weather.daily?.sunset?.[0]);
+  const conditions = computeConditions(searchWeather.hourly, wh, aqi, searchWeather.daily?.sunrise?.[0], searchWeather.daily?.sunset?.[0]);
 
   const now = Date.now();
   const preview: RecommendationsResponse["hourlyPreview"] = [];
-  for (let i = 0; i < weather.hourly.time.length && preview.length < wh; i++) {
-    const t = new Date(weather.hourly.time[i]).getTime();
+  for (let i = 0; i < searchWeather.hourly.time.length && preview.length < wh; i++) {
+    const t = new Date(searchWeather.hourly.time[i]).getTime();
     if (t < now) continue;
 
     preview.push({
-      timeISO: weather.hourly.time[i],
-      tempF: weather.hourly.apparent_temperature?.[i] ?? weather.hourly.temperature_2m?.[i],
-      precipProb: weather.hourly.precipitation_probability?.[i],
-      windMph: weather.hourly.windspeed_10m?.[i],
+      timeISO: searchWeather.hourly.time[i],
+      tempF: searchWeather.hourly.apparent_temperature?.[i] ?? searchWeather.hourly.temperature_2m?.[i],
+      precipProb: searchWeather.hourly.precipitation_probability?.[i],
+      windMph: searchWeather.hourly.windspeed_10m?.[i],
     });
   }
 
