@@ -52,9 +52,10 @@ function dimAvgAB(varParams: Record<string, AB> | undefined): AB {
 type Props = {
   betaParams: BetaParams;
   onReset: () => void;
+  onExport: () => void;
 };
 
-export function LearnedPrefsPanel({ betaParams, onReset }: Props) {
+export function LearnedPrefsPanel({ betaParams, onReset, onExport }: Props) {
   return (
     <div
       style={{
@@ -75,20 +76,36 @@ export function LearnedPrefsPanel({ betaParams, onReset }: Props) {
         }}
       >
         <span style={{ fontWeight: 700, fontSize: 14 }}>Learned preferences</span>
-        <button
-          onClick={onReset}
-          style={{
-            padding: "5px 10px",
-            borderRadius: 8,
-            border: "1px solid #ddd",
-            background: "white",
-            fontSize: 12,
-            color: "#666",
-            cursor: "pointer",
-          }}
-        >
-          Reset to defaults
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={onExport}
+            style={{
+              padding: "5px 10px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              background: "white",
+              fontSize: 12,
+              color: "#666",
+              cursor: "pointer",
+            }}
+          >
+            Export
+          </button>
+          <button
+            onClick={onReset}
+            style={{
+              padding: "5px 10px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              background: "white",
+              fontSize: 12,
+              color: "#666",
+              cursor: "pointer",
+            }}
+          >
+            Reset to defaults
+          </button>
+        </div>
       </div>
 
       <div style={{ overflowX: "auto" }}>

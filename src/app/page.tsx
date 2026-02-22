@@ -360,7 +360,7 @@ export default function Page() {
 
   function submitRating() {
     if (!rateTarget || !rateConditions || !learningState) return;
-    const updated = addObservation(learningState, rateTarget.activityId, rateConditions, rateValue);
+    const updated = addObservation(learningState, rateTarget.activityId, rateConditions, rateValue, { name: rateTarget.name, lat: rateTarget.lat, lon: rateTarget.lon });
     saveState(updated);
     setLearningState(updated);
     setRateTarget(null);
@@ -743,6 +743,15 @@ export default function Page() {
       {showLearnedPrefs && learningState && (
         <LearnedPrefsPanel
           betaParams={learningState.betaParams}
+          onExport={() => {
+            const json = JSON.stringify(learningState, null, 2);
+            const blob = new Blob([json], { type: "application/json" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "outdoor-learning.json";
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }}
           onReset={() => {
             const { defaultState } = require("@/lib/learning/store");
             const s = defaultState();

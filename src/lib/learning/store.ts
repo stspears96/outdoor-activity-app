@@ -59,7 +59,8 @@ export function addObservation(
   state: LearningState,
   activityId: ActivityId,
   conditions: Conditions,
-  userRating: number // 0–100
+  userRating: number, // 0–100
+  location?: { name: string; lat: number; lon: number }
 ): LearningState {
   const rating01 = userRating / 100;
 
@@ -67,6 +68,9 @@ export function addObservation(
     id: typeof crypto !== "undefined" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
     timestamp: Date.now(),
     activityId,
+    locationName: location?.name,
+    locationLat: location?.lat,
+    locationLon: location?.lon,
     conditions,
     userRating,
   };

@@ -103,9 +103,10 @@ export async function GET(req: Request) {
     
     const score = computeActivityScore(activity.activityId, activity.name, specificWeather, wh);
     
-    // For surf spots, overwrite the reasoning with the detailed surf report (Swell, Tide, offshore wind)
-    if (activity.isSurf && activity.reasons) {
-        score.why = activity.reasons;
+    // For surf spots, use the surf-specific score and reasons from scoreSurfSpot
+    if (activity.isSurf) {
+        if (typeof activity.score === "number") score.score = activity.score;
+        if (activity.reasons) score.why = activity.reasons;
     }
 
     let bestHourConditions = null;

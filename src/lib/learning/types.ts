@@ -50,6 +50,10 @@ export type Observation = {
   id: string;
   timestamp: number;
   activityId: ActivityId;
+  // Specific location rated — optional for backwards compatibility with stored data
+  locationName?: string;
+  locationLat?: number;
+  locationLon?: number;
   conditions: Conditions;
   userRating: number; // 0–100
 };
