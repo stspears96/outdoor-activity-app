@@ -10,7 +10,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
   ReferenceLine,
 } from "recharts";
 import type { WeatherResponse } from "@/lib/types";
@@ -65,39 +64,6 @@ function lerpAngle(a: number, b: number, t: number) {
   return (a + delta * t + 360) % 360;
 }
 
-const CustomLegend = (props: any) => {
-  const { payload } = props;
-  
-  const order = ["Observed Hs (ft)", "Forecast Hs (ft)", "Tide (ft)", "Peak Period (s)", "Avg Period (s)"];
-  const sortedPayload = [...payload].sort((a, b) => order.indexOf(a.value) - order.indexOf(b.value));
-
-  return (
-    <ul style={{ listStyle: 'none', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '16px', margin: 0, padding: '8px 0', fontSize: '12px' }}>
-      {sortedPayload.map((entry: any, index: number) => {
-        return (
-          <li key={`item-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <svg width="24" height="12" style={{ display: 'block' }}>
-              {entry.type === 'area' ? (
-                <>
-                  <rect x="0" y="0" width="24" height="12" fill={entry.color} fillOpacity="0.2" />
-                  <line x1="0" y1="0" x2="24" y2="0" stroke={entry.color} strokeWidth="4" />
-                </>
-              ) : (
-                <line 
-                  x1="0" y1="6" x2="24" y2="6" 
-                  stroke={entry.color} 
-                  strokeWidth="2" 
-                  strokeDasharray={entry.payload?.strokeDasharray}
-                />
-              )}
-            </svg>
-            <span style={{ color: '#333' }}>{entry.value}</span>
-          </li>
-        );
-      })}
-    </ul>
-  );
-};
 
 const QUALITY_LEVELS = [
   { label: "Poor", color: "#ef4444" },
@@ -375,47 +341,69 @@ export default function SwellForecastModal(props: {
 
         {!loading && !error && data && data.length > 0 && (
           <>
-            <div
-              style={{
-                display: "flex",
-                gap: 0,
-                marginBottom: 4,
-                paddingLeft: 60,
-                paddingRight: 40,
-                overflow: "hidden",
-              }}
-            >
+            {/* Wind direction row */}
+            <div style={{ display: "flex", gap: 0, marginBottom: 2, paddingLeft: 48, paddingRight: 16, overflow: "hidden" }}>
               {data
-                .filter(
-                  (_, i) => i % Math.max(1, Math.floor(data.length / 24)) === 0
-                )
+                .filter((_, i) => i % Math.max(1, Math.floor(data.length / 24)) === 0)
                 .map((r) =>
                   r.windDir != null ? (
                     <span
                       key={r.time}
                       title={`Wind: ${r.windSpeed?.toFixed(0)} mph from ${r.windDir.toFixed(0)}° at ${r.label}`}
-                      style={{
-                        flex: 1,
-                        textAlign: "center",
-                        fontSize: 24,
-                        color: "#0b5",
-                        transform: `rotate(${r.windDir}deg)`, 
-                        display: "inline-block",
-                      }}
-                    >
-                      ↓
-                    </span>
+                      style={{ flex: 1, textAlign: "center", fontSize: 20, color: "#0b5", transform: `rotate(${r.windDir}deg)`, display: "inline-block" }}
+                    >↓</span>
                   ) : (
                     <span key={r.time} style={{ flex: 1 }} />
                   )
                 )}
             </div>
 
-            <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart
-                data={data}
-                margin={{ top: 8, right: 12, bottom: 4, left: 4 }}
-              >
+            {/* Chart 1: Swell Height */}
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#555", textAlign: "center", marginBottom: 2 }}>Swell Height (ft)</div>
+            <ResponsiveContainer width="100%" height={150}>
+              <ComposedChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} ticks={timeTick(data)} tick={false} height={1} scale="time" />
+                <YAxis width={48} tick={{ fontSize: 10 }} domain={[0, "auto"]} />
+                <Tooltip
+                  labelFormatter={(v) => formatTime(Number(v))}
+                  formatter={(val, name) => [Number(val).toFixed(1) + " ft", name]}
+                />
+                <Area type="monotone" dataKey="nowcastHs" name="Observed" stroke="#0077cc" fill="#0077cc22" strokeWidth={2} dot={false} connectNulls />
+                <Line type="monotone" dataKey="forecastHs" name="Forecast" stroke="#e05530" strokeWidth={2} strokeDasharray="6 3" dot={false} connectNulls />
+                <ReferenceLine x={nowMs} stroke="red" strokeWidth={1.5} strokeDasharray="3 3" label={{ value: "NOW", position: "insideTopRight", fontSize: 10, fill: "red", fontWeight: "bold" }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div style={{ display: "flex", justifyContent: "center", gap: 16, fontSize: 11, color: "#555", marginBottom: 10 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}><svg width="20" height="10"><rect x="0" y="0" width="20" height="10" fill="#0077cc22" /><line x1="0" y1="0" x2="20" y2="0" stroke="#0077cc" strokeWidth="2" /></svg>Observed</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}><svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#e05530" strokeWidth="2" strokeDasharray="6 3" /></svg>Forecast</span>
+            </div>
+
+            {/* Chart 2: Swell Period */}
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#555", textAlign: "center", marginBottom: 2 }}>Swell Period (s)</div>
+            <ResponsiveContainer width="100%" height={120}>
+              <ComposedChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} ticks={timeTick(data)} tick={false} height={1} scale="time" />
+                <YAxis width={48} tick={{ fontSize: 10 }} domain={[0, "auto"]} />
+                <Tooltip
+                  labelFormatter={(v) => formatTime(Number(v))}
+                  formatter={(val, name) => [Number(val).toFixed(1) + " s", name]}
+                />
+                <Line type="monotone" dataKey="tp" name="Peak" stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls />
+                <Line type="monotone" dataKey="ta" name="Avg" stroke="#d97706" strokeWidth={2} strokeDasharray="4 2" dot={false} connectNulls />
+                <ReferenceLine x={nowMs} stroke="red" strokeWidth={1.5} strokeDasharray="3 3" />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div style={{ display: "flex", justifyContent: "center", gap: 16, fontSize: 11, color: "#555", marginBottom: 10 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}><svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#f59e0b" strokeWidth="2" /></svg>Peak</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}><svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#d97706" strokeWidth="2" strokeDasharray="4 2" /></svg>Avg</span>
+            </div>
+
+            {/* Chart 3: Tide */}
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#555", textAlign: "center", marginBottom: 2 }}>Tide (ft)</div>
+            <ResponsiveContainer width="100%" height={130}>
+              <ComposedChart data={data} margin={{ top: 4, right: 16, bottom: 4, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
                 <XAxis
                   dataKey="time"
@@ -424,108 +412,18 @@ export default function SwellForecastModal(props: {
                   ticks={timeTick(data)}
                   tickFormatter={(v: number) => {
                     const d = new Date(v);
-                    const day = d.toLocaleDateString(undefined, { weekday: "short" });
-                    const hr = d.getHours();
-                    return `${day} ${hr}:00`;
+                    return d.toLocaleDateString(undefined, { weekday: "short" }) + " " + d.getHours() + ":00";
                   }}
                   tick={{ fontSize: 10 }}
                   scale="time"
                 />
-                <YAxis
-                  yAxisId="hs"
-                  label={{
-                    value: "Height / Tide (ft)",
-                    angle: -90,
-                    position: "insideLeft",
-                    style: { fontSize: 11 },
-                  }}
-                  tick={{ fontSize: 11 }}
-                  domain={[0, "auto"]}
-                />
-                <YAxis
-                  yAxisId="tp"
-                  orientation="right"
-                  label={{
-                    value: "Period (s)",
-                    angle: 90,
-                    position: "insideRight",
-                    style: { fontSize: 11 },
-                  }}
-                  tick={{ fontSize: 11 }}
-                  domain={[0, "auto"]}
-                />
+                <YAxis width={48} tick={{ fontSize: 10 }} domain={["auto", "auto"]} />
                 <Tooltip
                   labelFormatter={(v) => formatTime(Number(v))}
-                  formatter={(value, name) => {
-                    const v = Number(value);
-                    if (name.includes("Hs")) return [v.toFixed(1) + " ft", name];
-                    if (name.includes("Tide")) return [v.toFixed(1) + " ft", name];
-                    if (name.includes("Period")) return [v.toFixed(1) + " s", name];
-                    return [value, name];
-                  }}
+                  formatter={(val, name) => [Number(val).toFixed(1) + " ft", name]}
                 />
-                <Legend content={<CustomLegend />} />
-                
-                <Area
-                  yAxisId="hs"
-                  type="monotone"
-                  dataKey="nowcastHs"
-                  name="Observed Hs (ft)"
-                  stroke="#0077cc"
-                  fill="#0077cc22"
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls
-                />
-                <Line
-                  yAxisId="hs"
-                  type="monotone"
-                  dataKey="forecastHs"
-                  name="Forecast Hs (ft)"
-                  stroke="#e05530"
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  dot={false}
-                  connectNulls
-                />
-                <Line
-                  yAxisId="hs"
-                  type="step"
-                  dataKey="tideHeight"
-                  name="Tide (ft)"
-                  stroke="#94a3b8"
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls
-                />
-                <Line
-                  yAxisId="tp"
-                  type="monotone"
-                  dataKey="tp"
-                  name="Peak Period (s)"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  dot={false}
-                  connectNulls
-                />
-                <Line
-                  yAxisId="tp"
-                  type="monotone"
-                  dataKey="ta"
-                  name="Avg Period (s)"
-                  stroke="#d97706"
-                  strokeWidth={2}
-                  strokeDasharray="4 2"
-                  dot={false}
-                  connectNulls
-                />
-                <ReferenceLine 
-                    x={nowMs} 
-                    stroke="red" 
-                    strokeWidth={2}
-                    strokeDasharray="3 3" 
-                    label={{ value: "NOW", position: "top", fontSize: 12, fill: "red", fontWeight: 'bold' }} 
-                />
+                <Line type="monotone" dataKey="tideHeight" name="Tide" stroke="#94a3b8" strokeWidth={2} dot={false} connectNulls />
+                <ReferenceLine x={nowMs} stroke="red" strokeWidth={1.5} strokeDasharray="3 3" />
               </ComposedChart>
             </ResponsiveContainer>
 
@@ -533,7 +431,7 @@ export default function SwellForecastModal(props: {
                 <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 4, textAlign: 'center' }}>
                     Surf Quality Forecast
                 </div>
-                <div style={{ display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', marginLeft: 60, marginRight: 40 }}>
+                <div style={{ display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', marginLeft: 48, marginRight: 16 }}>
                     {data.map((r, i) => (
                         <div 
                             key={i} 

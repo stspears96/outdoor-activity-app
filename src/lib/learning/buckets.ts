@@ -148,6 +148,12 @@ export function getSwellPeriodDiffBucket(diff: number): string {
   return "large";
 }
 
+export function getTideHeightBucket(ft: number): string {
+  if (ft < 2.5) return "low";
+  if (ft <= 4.5) return "mid";
+  return "high";
+}
+
 // windOffshoreAngleDeg: degrees from the offshore window centre (0=dead offshore, 180=onshore)
 export function getWindOffshoreBucket(deg: number): string {
   if (deg <= 30) return "offshore";
@@ -211,6 +217,8 @@ export function getBuckets(cond: Conditions): BucketMap {
   if (cond.swellAvgPeriodS != null) result.swellAvgPeriod = getSwellPeriodBucket(cond.swellAvgPeriodS);
   if (cond.swellPeriodDiffS != null) result.swellPeriodDiff = getSwellPeriodDiffBucket(cond.swellPeriodDiffS);
   if (cond.windOffshoreAngleDeg != null) result.windOffshore = getWindOffshoreBucket(cond.windOffshoreAngleDeg);
+  if (cond.tideHeightFt != null) result.tideHeight = getTideHeightBucket(cond.tideHeightFt);
+  if (cond.tideState != null) result.tideState = cond.tideState;
 
   return result;
 }
@@ -284,4 +292,6 @@ export const BUCKET_DIMS: Array<{ key: string; label: string; buckets: string[] 
   { key: "swellAvgPeriod",   label: "Avg period",       buckets: ["short","medium","good","long"] },
   { key: "swellPeriodDiff",  label: "Period spread",    buckets: ["very_small", "small", "moderate", "large"] },
   { key: "windOffshore",     label: "Wind vs offshore", buckets: ["offshore","side_offshore","sideshore","side_onshore","onshore"] },
+  { key: "tideHeight",       label: "Tide height",      buckets: ["low","mid","high"] },
+  { key: "tideState",        label: "Tide state",       buckets: ["rising","falling","stable"] },
 ];

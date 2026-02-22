@@ -56,6 +56,8 @@ export type Conditions = {
   swellAvgPeriodS?: number;      // seconds (Ta)
   swellPeriodDiffS?: number;     // seconds (Tp - Ta)
   windOffshoreAngleDeg?: number; // degrees from offshore window centre (0 = dead offshore)
+  tideHeightFt?: number;         // feet (MLLW)
+  tideState?: "rising" | "falling" | "stable";
 };
 
 export type WeatherResponse = {

@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const station = await fetchNearestTideStation(lat, lon);
+    const station = await fetchNearestTideStation(lat, lon, 100);
     if (!station) {
       return NextResponse.json({ predictions: [], station: null });
     }
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       station,
       predictions: predictions.map(p => ({
-        timeISO: new Date(p.t + "Z").toISOString(),
+        timeISO: new Date(p.t.replace(" ", "T") + "Z").toISOString(),
         heightFt: Number(p.v),
       }))
     });

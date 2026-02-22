@@ -96,9 +96,9 @@ export async function getScoredSurfSpots(lat: number, lon: number, radiusKm: num
   const getTideAt = (timeMs: number) => {
     if (tideData.length === 0) return null;
     let closest = tideData[0];
-    let minDist = Math.abs(Date.parse(closest.t + "Z") - timeMs);
+    let minDist = Math.abs(Date.parse(closest.t.replace(" ", "T") + "Z") - timeMs);
     for (const p of tideData) {
-        const d = Math.abs(Date.parse(p.t + "Z") - timeMs);
+        const d = Math.abs(Date.parse(p.t.replace(" ", "T") + "Z") - timeMs);
         if (d < minDist) {
             minDist = d;
             closest = p;

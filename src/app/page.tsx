@@ -348,6 +348,8 @@ export default function Page() {
             swellAvgPeriodS: sc.swellAvgPeriodS ?? undefined,
             swellPeriodDiffS: sc.swellPeriodDiffS ?? undefined,
             windOffshoreAngleDeg,
+            tideHeightFt: sc.tideHeightFt ?? undefined,
+            tideState: sc.tideState ?? undefined,
           });
         }
       }

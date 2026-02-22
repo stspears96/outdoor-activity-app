@@ -160,6 +160,9 @@ export default function MapView(props: {
 	  const swellP = s.conditions?.swellPeakPeriodS ?? s.conditions?.swellPeriodS ?? s.conditions?.wavePeriodS;
       const swellTa = s.conditions?.swellAvgPeriodS;
 
+	  const tideHeightFt = s.conditions?.tideHeightFt;
+	  const tideState = s.conditions?.tideState;
+
 	  const windFrom = s.conditions?.windDirDeg;          // e.g. 53 means FROM NE
 	  const windTo = windFromToWindTo(windFrom);          // 233 means blowing toward SW
 	  const windArrowCssDeg = meteoToCssRotation(windTo); // convert to CSS rotation
@@ -193,6 +196,10 @@ export default function MapView(props: {
 		    {typeof swellH === "number" && typeof swellP === "number"
 		      ? `Swell: ${swellH.toFixed(1)} m @ ${swellP.toFixed(0)}s${swellTa ? ` (${swellTa.toFixed(0)}s)` : ''} @ ${normalizeDeg(swellDir)?.toFixed(0)}°`
 		      : "Swell: —"}
+		    <br />
+		    {typeof tideHeightFt === "number"
+		      ? `Tide: ${tideHeightFt.toFixed(1)} ft${tideState ? ` (${tideState})` : ''}`
+		      : "Tide: —"}
 		  </div>
 
 		  {Array.isArray(s.reasons) && s.reasons.length ? (

@@ -28,6 +28,8 @@ export type SurfSpotMarker = {
     waveHeightM?: number;
     wavePeriodS?: number;
     waveDirDeg?: number;
+    tideHeightFt?: number;
+    tideState?: "rising" | "falling" | "stable";
   };
 };
 
