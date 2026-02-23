@@ -14,17 +14,40 @@ import { GeoButton } from "@/components/GeoButton";
 import { LocationSearch } from "@/components/LocationSearch";
 import MapViewDynamic from "@/components/MapViewDynamic";
 import SwellForecastModal from "@/components/SwellForecastModal";
+import LogSessionModal from "@/components/LogSessionModal";
 import { LearnedPrefsPanel } from "@/components/LearnedPrefsPanel";
 import type { LearningState } from "@/lib/learning/types";
-import type { Conditions } from "@/lib/types";
 import { loadState, saveState, addObservation } from "@/lib/learning/store";
-import { circularCenter, angularDist } from "@/lib/learning/buckets";
 
 export default function Page() {
   const [lat, setLat] = useState<number | null>(null);
   const [lon, setLon] = useState<number | null>(null);
   const [locationLabel, setLocationLabel] = useState("You are here");
-  const [windowHours, setWindowHours] = useState(6);
+  const defaultWindowHours = 3;
+  const [selectedDate, setSelectedDate] = useState<string>("");
+
+  const todayStr = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }, []);
+
+  const next7Days = useMemo(() => {
+    const out: Array<{ value: string; label: string }> = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const value = `${y}-${m}-${day}`;
+      const label = i === 0 ? "Today" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      out.push({ value, label });
+    }
+    return out;
+  }, []);
 
   // Recommendations (weather-based activity scores)
   const [data, setData] = useState<RecommendationsResponse | null>(null);
@@ -68,18 +91,18 @@ export default function Page() {
   // ---- Swell forecast modal ----
   const [forecastSpot, setForecastSpot] = useState<any | null>(null);
 
-  // ---- Learning / rating ----
-  const [learningState, setLearningState] = useState<LearningState | null>(null);
-  const [showLearnedPrefs, setShowLearnedPrefs] = useState(false);
-  const [rateTarget, setRateTarget] = useState<{
-    activityId: ActivityId;
-    name: string;
+  // ---- Log session modal ----
+  const [logTarget, setLogTarget] = useState<{
+    activityType: string;
+    spotId?: string | null;
+    spotName: string;
     lat: number;
     lon: number;
   } | null>(null);
-  const [rateConditions, setRateConditions] = useState<Conditions | null>(null);
-  const [rateConditionsBusy, setRateConditionsBusy] = useState(false);
-  const [rateValue, setRateValue] = useState(70);
+
+  // ---- Learning ----
+  const [learningState, setLearningState] = useState<LearningState | null>(null);
+  const [showLearnedPrefs, setShowLearnedPrefs] = useState(false);
 
   // Load learning state once on mount
   useEffect(() => { setLearningState(loadState()); }, []);
@@ -95,7 +118,10 @@ export default function Page() {
     setError(null);
     setData(null);
     try {
-      let url = `/api/individual-recommendations?lat=${lat}&lon=${lon}&windowHours=${windowHours}`;
+      let url = `/api/individual-recommendations?lat=${lat}&lon=${lon}&windowHours=${defaultWindowHours}`;
+      if (selectedDate) {
+        url += `&date=${encodeURIComponent(selectedDate)}`;
+      }
       if (activityTypeFilter !== "all") {
         url += `&activityType=${activityTypeFilter}`;
       }
@@ -109,13 +135,13 @@ export default function Page() {
     } finally {
       setBusy(false);
     }
-  }, [canFetch, lat, lon, windowHours, activityTypeFilter]);
+  }, [canFetch, lat, lon, defaultWindowHours, activityTypeFilter, selectedDate]);
 
-  // Fetch recommendations when we first get a location and when windowHours or activityTypeFilter changes
+  // Fetch recommendations when we first get a location and when filters or date change
   useEffect(() => {
     if (canFetch) fetchRecs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canFetch, windowHours, activityTypeFilter]);
+  }, [canFetch, defaultWindowHours, activityTypeFilter, selectedDate]);
 
   // Fetch places when in "places" mode
   useEffect(() => {
@@ -149,7 +175,8 @@ export default function Page() {
       setSurfError(null);
 
       try {
-        const res = await fetch(`/api/surf?lat=${lat}&lon=${lon}&radiusKm=60`);
+        const dateParam = selectedDate ? `&date=${encodeURIComponent(selectedDate)}` : "";
+        const res = await fetch(`/api/surf?lat=${lat}&lon=${lon}&radiusKm=60${dateParam}`);
         if (!res.ok) throw new Error(`Surf request failed: ${res.status}`);
         const json = await res.json();
         const spots = (json.spots ?? []).map((s: any) => ({
@@ -295,103 +322,6 @@ export default function Page() {
     }
   }
 
-  // Use pre-computed conditions from activity if available, otherwise fetch
-  async function handleRateClick(activity: any) {
-    setRateTarget({ activityId: activity.id, name: activity.name, lat: activity.lat, lon: activity.lon });
-    setRateValue(70);
-    
-    if (activity.bestHourConditions) {
-        setRateConditions(activity.bestHourConditions);
-        setRateConditionsBusy(false);
-    } else {
-        setRateConditions(null);
-        setRateConditionsBusy(true);
-        try {
-          const res = await fetch(`/api/conditions?lat=${activity.lat}&lon=${activity.lon}&windowHours=${windowHours}`);
-          if (res.ok) {
-            const json = await res.json();
-            setRateConditions(json.conditions ?? null);
-          }
-        } catch { /* leave rateConditions null */ } finally {
-          setRateConditionsBusy(false);
-        }
-    }
-  }
-
-  // Surf-specific: augments base conditions with swell + offshore angle from the spot
-  async function handleSurfRateClick(spot: any) {
-    setRateTarget({ activityId: "surf", name: spot.name, lat: spot.lat, lon: spot.lon });
-    setRateConditions(null);
-    setRateConditionsBusy(true);
-    setRateValue(70);
-    try {
-      const res = await fetch(`/api/conditions?lat=${spot.lat}&lon=${spot.lon}&windowHours=${windowHours}`);
-      if (res.ok) {
-        const json = await res.json();
-        const baseCond: Conditions | null = json.conditions ?? null;
-        if (baseCond) {
-          const sc = spot.conditions ?? {};
-          // Compute wind-vs-offshore angle using the spot's window geometry
-          let windOffshoreAngleDeg: number | undefined;
-          if (
-            typeof sc.windDirDeg === "number" &&
-            spot.wind_offshore_min_deg != null &&
-            spot.wind_offshore_max_deg != null
-          ) {
-            const center = circularCenter(spot.wind_offshore_min_deg, spot.wind_offshore_max_deg);
-            windOffshoreAngleDeg = angularDist(sc.windDirDeg, center);
-          }
-          setRateConditions({
-            ...baseCond,
-            swellHeightM: sc.swellHeightM ?? undefined,
-            swellPeakPeriodS: sc.swellPeakPeriodS ?? undefined,
-            swellAvgPeriodS: sc.swellAvgPeriodS ?? undefined,
-            swellPeriodDiffS: sc.swellPeriodDiffS ?? undefined,
-            windOffshoreAngleDeg,
-            tideHeightFt: sc.tideHeightFt ?? undefined,
-            tideState: sc.tideState ?? undefined,
-          });
-        }
-      }
-    } catch { /* leave null */ } finally {
-      setRateConditionsBusy(false);
-    }
-  }
-
-  function submitRating() {
-    if (!rateTarget || !rateConditions || !learningState) return;
-    const updated = addObservation(learningState, rateTarget.activityId, rateConditions, rateValue, { name: rateTarget.name, lat: rateTarget.lat, lon: rateTarget.lon });
-    saveState(updated);
-    setLearningState(updated);
-    setRateTarget(null);
-    setRateConditions(null);
-  }
-
-  function cancelRating() {
-    setRateTarget(null);
-    setRateConditions(null);
-  }
-
-  function conditionsSummary(c: Conditions): string {
-    const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-    const sector = Math.round(((c.windDirDeg % 360) + 360) % 360 / 45) % 8;
-    const parts = [
-      `${Math.round(c.tempF)}°F`,
-      `${Math.round(c.windMph)} mph ${dirs[sector]}`,
-      `${Math.round(c.precipProb)}% rain`,
-    ];
-    if (c.aqi !== null) parts.push(`AQI ${Math.round(c.aqi)}`);
-    if (c.swellHeightM != null) parts.push(`${c.swellHeightM.toFixed(1)}m swell`);
-    if (c.swellPeakPeriodS != null) parts.push(`${Math.round(c.swellPeakPeriodS)}s peak`);
-    if (c.tideHeightFt != null) parts.push(`Tide ${c.tideHeightFt.toFixed(1)}ft${c.tideState ? ` (${c.tideState})` : ''}`);
-    if (c.windOffshoreAngleDeg != null) parts.push(`${Math.round(c.windOffshoreAngleDeg)}° from offshore`);
-    if (c.timeISO) {
-        const time = new Date(c.timeISO).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        parts.push(`at ${time}`);
-    }
-    return parts.join(" · ");
-  }
-
   const formatBestHour = (iso?: string) => {
     if (!iso) return "Now";
     const d = new Date(iso);
@@ -409,9 +339,12 @@ export default function Page() {
 
   return (
     <main style={{ maxWidth: 980, margin: "0 auto", padding: 18 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>
-        Outdoor activity suggester
-      </h1>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 16, marginBottom: 8 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>
+          Outdoor activity suggester
+        </h1>
+        <a href="/sessions" style={{ fontSize: 13, color: "#3b82f6" }}>Sessions</a>
+      </div>
       <p style={{ color: "#444", marginTop: 0 }}>
         Picks activities based on the next few hours of weather near you, then
         shows nearby spots on a map.
@@ -444,25 +377,28 @@ export default function Page() {
           }}
         />
 
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 13, color: "#444" }}>Window</span>
-          <select
-            value={windowHours}
-            onChange={(e) => setWindowHours(Number(e.target.value))}
-            style={{
-              padding: "9px 10px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              background: "white",
-            }}
-          >
-            {[3, 6, 9, 12, 24].map((h) => (
-              <option key={h} value={h}>
-                next {h} hours
-              </option>
-            ))}
-          </select>
-        </label>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: "#444" }}>Date</span>
+          {next7Days.map((d) => {
+            const isSelected = (selectedDate || todayStr) === d.value;
+            return (
+              <button
+                key={d.value}
+                onClick={() => setSelectedDate(d.value === todayStr ? "" : d.value)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #ddd",
+                  background: isSelected ? "#e0e7ff" : "white",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                {d.label}
+              </button>
+            );
+          })}
+        </div>
 
         <button
           onClick={fetchRecs}
@@ -563,6 +499,7 @@ export default function Page() {
             const spot = surfSpots.find(s => s.cdip_transect_id === transectId && s.lat === la);
             setForecastSpot(spot ?? { name, cdip_transect_id: transectId, lat: la, lon: lo });
         }}
+            onLogSession={(spotId, spotName, sLat, sLon) => setLogTarget({ activityType: "surf", spotId, spotName, lat: sLat, lon: sLon })}
           />
 
         </section>
@@ -610,112 +547,74 @@ export default function Page() {
                 </thead>
                 <tbody>
                   {mode === "surf"
-                    ? surfSpots.slice(0, 10).flatMap((s: any) => {
-                        const isRating = rateTarget?.name === s.name && rateTarget?.lat === s.lat;
-                        return [
-                          <tr key={s.id ?? s.name}>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
+                    ? surfSpots.slice(0, 10).map((s: any) => (
+                        <tr key={s.id ?? s.name}>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                            <button
+                              onClick={() => setMapCenter([s.lat, s.lon])}
+                              style={{ background: 'none', border: 'none', padding: 0, color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}
+                            >
+                              {s.name}
+                            </button>
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>Now</td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>{s.score ?? "—"}</td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
+                            {(s.reasons ?? []).slice(0, 3).join(", ")}
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              {learningState && (
                                 <button
-                                    onClick={() => setMapCenter([s.lat, s.lon])}
-                                    style={{ background: 'none', border: 'none', padding: 0, color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}
+                                  onClick={() => setLogTarget({ activityType: "surf", spotId: s.id, spotName: s.name, lat: s.lat, lon: s.lon })}
+                                  style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: "white" }}
                                 >
-                                    {s.name}
+                                  Log
                                 </button>
-                            </td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>Now</td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>{s.score ?? "—"}</td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
-                              {(s.reasons ?? []).slice(0, 3).join(", ")}
-                            </td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
-                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                    {learningState && (
-                                        <button
-                                        onClick={() => isRating ? cancelRating() : handleSurfRateClick(s)}
-                                        style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: isRating ? "#fee2e2" : "white" }}
-                                        >
-                                        {isRating ? "Cancel" : "Rate"}
-                                        </button>
-                                    )}
-                                    {s.cdip_transect_id && (
-                                        <button
-                                            onClick={() => setForecastSpot(s)}
-                                            style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: "white" }}
-                                        >
-                                            Forecast
-                                        </button>
-                                    )}
-                                </div>
-                            </td>
-                          </tr>,
-                          ...(isRating ? [
-                            <tr key={`${s.name}-rating`}>
-                              <td colSpan={5} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
-                                <RatingRow
-                                  name={s.name}
-                                  busy={rateConditionsBusy}
-                                  conditions={rateConditions}
-                                  value={rateValue}
-                                  onValueChange={setRateValue}
-                                  onSubmit={submitRating}
-                                  onCancel={cancelRating}
-                                  conditionsSummary={conditionsSummary}
-                                />
-                              </td>
-                            </tr>
-                          ] : []),
-                        ];
-                      })
-                    : data.activities.slice(0, 10).flatMap((a: any) => {
-                        const isRating = rateTarget?.name === a.name && rateTarget?.lat === a.lat;
-                        return [
-                          <tr key={a.name}>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
+                              )}
+                              {s.cdip_transect_id && (
                                 <button
-                                    onClick={() => setMapCenter([a.lat, a.lon])}
-                                    style={{ background: 'none', border: 'none', padding: 0, color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}
+                                  onClick={() => setForecastSpot(s)}
+                                  style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: "white" }}
                                 >
-                                    {a.name}
+                                  Forecast
                                 </button>
-                            </td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
-                                {formatBestHour(a.bestHourISO)}
-                            </td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>{a.score}</td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
-                              {a.why.join(", ")}
-                            </td>
-                            <td style={{ padding: 10, borderBottom: isRating ? "none" : "1px solid #f2f2f2" }}>
-                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                    {learningState && (a.lat != null && a.lon != null) && (
-                                        <button
-                                            onClick={() => isRating ? cancelRating() : handleRateClick(a)}
-                                            style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: isRating ? "#fee2e2" : "white" }}
-                                        >
-                                            {isRating ? "Cancel" : "Rate"}
-                                        </button>
-                                    )}
-                                </div>
-                            </td>
-                          </tr>,
-                          ...(isRating ? [
-                            <tr key={`${a.name}-rating`}>
-                              <td colSpan={5} style={{ padding: "10px 14px", borderBottom: "1px solid #f2f2f2", background: "#f8faff" }}>
-                                <RatingRow
-                                  name={a.name}
-                                  busy={rateConditionsBusy}
-                                  conditions={rateConditions}
-                                  value={rateValue}
-                                  onValueChange={setRateValue}
-                                  onSubmit={submitRating}
-                                  onCancel={cancelRating}
-                                  conditionsSummary={conditionsSummary}
-                                />
-                              </td>
-                            </tr>
-                          ] : []),
-                        ];
-                      })}
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    : data.activities.slice(0, 10).map((a: any) => (
+                        <tr key={a.name}>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                            <button
+                              onClick={() => setMapCenter([a.lat, a.lon])}
+                              style={{ background: 'none', border: 'none', padding: 0, color: '#3b82f6', textDecoration: 'underline', cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}
+                            >
+                              {a.name}
+                            </button>
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                            {formatBestHour(a.bestHourISO)}
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>{a.score}</td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
+                            {a.why.join(", ")}
+                          </td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                              {learningState && (a.lat != null && a.lon != null) && (
+                                <button
+                                  onClick={() => setLogTarget({ activityType: a.id, spotName: a.name, lat: a.lat, lon: a.lon })}
+                                  style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid #ddd", cursor: "pointer", background: "white" }}
+                                >
+                                  Log
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                 </tbody>
               </table>
             </div>
@@ -737,6 +636,25 @@ export default function Page() {
           swell_max_deg={forecastSpot.swell_max_deg}
           tide_preference={forecastSpot.tide_preference}
           onClose={() => setForecastSpot(null)}
+        />
+      )}
+
+      {logTarget && learningState && (
+        <LogSessionModal
+          {...logTarget}
+          onClose={() => setLogTarget(null)}
+          onSuccess={({ conditions, model_score, rating }) => {
+            const updated = addObservation(
+              learningState,
+              logTarget.activityType as ActivityId,
+              conditions,
+              rating,
+              { name: logTarget.spotName, lat: logTarget.lat, lon: logTarget.lon }
+            );
+            saveState(updated);
+            setLearningState(updated);
+            setLogTarget(null);
+          }}
         />
       )}
 
@@ -762,77 +680,5 @@ export default function Page() {
       )}
 
     </main>
-  );
-}
-
-// ─── Inline rating row ─────────────────────────────────────────────────────────
-
-function RatingRow({
-  name,
-  busy,
-  conditions,
-  value,
-  onValueChange,
-  onSubmit,
-  onCancel,
-  conditionsSummary,
-}: {
-  name: string;
-  busy: boolean;
-  conditions: import("@/lib/types").Conditions | null;
-  value: number;
-  onValueChange: (v: number) => void;
-  onSubmit: () => void;
-  onCancel: () => void;
-  conditionsSummary: (c: import("@/lib/types").Conditions) => string;
-}) {
-  return (
-    <div>
-      <div style={{ fontSize: 12, color: "#555", marginBottom: 6 }}>
-        {busy
-          ? `Fetching conditions at ${name} location…`
-          : conditions
-          ? `Conditions at site: ${conditionsSummary(conditions)}`
-          : "Could not fetch site conditions"}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={value}
-          disabled={busy || !conditions}
-          onChange={e => onValueChange(Number(e.target.value))}
-          style={{ flex: 1, accentColor: "#3b82f6" }}
-        />
-        <span style={{ fontWeight: 700, width: 28, textAlign: "right" }}>{value}</span>
-        <button
-          onClick={onSubmit}
-          disabled={busy || !conditions}
-          style={{
-            padding: "5px 12px",
-            borderRadius: 7,
-            border: "none",
-            background: busy || !conditions ? "#cbd5e1" : "#3b82f6",
-            color: "white",
-            fontWeight: 600,
-            fontSize: 13,
-            cursor: busy || !conditions ? "not-allowed" : "pointer",
-          }}
-        >
-          Save
-        </button>
-        <button
-          onClick={onCancel}
-          style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #ddd", background: "white", fontSize: 13, cursor: "pointer" }}
-        >
-          Cancel
-        </button>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#aaa", marginTop: 2 }}>
-        <span>Terrible (0)</span>
-        <span>Amazing (100)</span>
-      </div>
-    </div>
   );
 }

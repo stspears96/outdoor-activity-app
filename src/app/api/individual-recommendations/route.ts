@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { ActivityId, RecommendationsResponse, WeatherResponse, TrailItem } from "@/lib/types";
-import { computeActivityScore } from "@/lib/scoring";
+import { computeActivityScore, getActivityWindowHours } from "@/lib/scoring";
 import { computeConditions } from "@/lib/weather";
 import { getScoredSurfSpots } from "@/lib/surfService";
 
@@ -22,19 +22,116 @@ function normCoord(c: number): number {
     return Math.round(c * 1000) / 1000;
 }
 
+function dateFromMs(ms: number) {
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function resolveBaseTime(time: string[], dateParam: string, sunrise?: string[]) {
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(dateParam);
+  const isDateTime = /^\d{4}-\d{2}-\d{2}T/.test(dateParam);
+
+  if (!isDateOnly && !isDateTime) return null;
+
+  if (isDateOnly) {
+    const now = Date.now();
+    const todayStr = dateFromMs(now);
+
+    if (dateParam === todayStr) {
+      return { baseTimeMs: now, dateStr: dateParam };
+    }
+
+    if (sunrise) {
+      const sunIdx = sunrise.findIndex(sr => sr.startsWith(dateParam));
+      if (sunIdx !== -1) {
+        const sunriseMs = new Date(sunrise[sunIdx]).getTime();
+        if (Number.isFinite(sunriseMs)) {
+          for (let i = 0; i < time.length; i++) {
+            const t = new Date(time[i]).getTime();
+            if (t >= sunriseMs) {
+              return { baseTimeMs: t, dateStr: dateParam };
+            }
+          }
+        }
+      }
+    }
+
+    const idx = time.findIndex(t => t.startsWith(dateParam));
+    if (idx === -1) return null;
+    const baseTimeMs = new Date(time[idx]).getTime();
+    if (!Number.isFinite(baseTimeMs)) return null;
+    return { baseTimeMs, dateStr: dateParam };
+  }
+
+  const targetMs = new Date(dateParam).getTime();
+  if (!Number.isFinite(targetMs)) return null;
+
+  let idx = -1;
+  for (let i = 0; i < time.length; i++) {
+    const t = new Date(time[i]).getTime();
+    if (t >= targetMs) {
+      idx = i;
+      break;
+    }
+  }
+
+  if (idx === -1) return null;
+  const baseTimeMs = new Date(time[idx]).getTime();
+  if (!Number.isFinite(baseTimeMs)) return null;
+  const dateStr = time[idx].split("T")[0];
+  return { baseTimeMs, dateStr };
+}
+
+function resolveDateParamToMs(dateParam: string) {
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(dateParam);
+  const isDateTime = /^\d{4}-\d{2}-\d{2}T/.test(dateParam);
+  if (!isDateOnly && !isDateTime) return null;
+  if (isDateOnly) {
+    // Use local noon to avoid anchoring to midnight.
+    const ms = new Date(`${dateParam}T12:00:00`).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  const ms = new Date(dateParam).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function pickBestHourISO(times: string[], baseTimeMs?: number, dateStr?: string) {
+  for (let i = 0; i < times.length; i++) {
+    if (dateStr && !times[i].startsWith(dateStr)) continue;
+    const t = new Date(times[i]).getTime();
+    if (typeof baseTimeMs === "number") {
+      if (t >= baseTimeMs) return times[i];
+    } else {
+      if (t >= Date.now()) return times[i];
+    }
+  }
+  return dateStr ? times.find(t => t.startsWith(dateStr)) : times[0];
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const lat = Number(searchParams.get("lat"));
   const lon = Number(searchParams.get("lon"));
-  const windowHours = Number(searchParams.get("windowHours") ?? "6");
+  const windowHours = Number(searchParams.get("windowHours") ?? "3");
   const radiusKm = Number(searchParams.get("radiusKm") ?? "16");
   const activityType = searchParams.get("activityType");
+  const dateParam = searchParams.get("date") ?? undefined;
+  const isDateOnly = !!dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam);
+  const isDateTime = !!dateParam && /^\d{4}-\d{2}-\d{2}T/.test(dateParam);
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return NextResponse.json({ error: "Missing or invalid lat/lon" }, { status: 400 });
   }
 
-  const wh = Number.isFinite(windowHours) ? Math.max(1, Math.min(24, windowHours)) : 6;
+  if (dateParam && !isDateOnly && !isDateTime) {
+    return NextResponse.json({ error: "Invalid or unavailable date" }, { status: 400 });
+  }
+
+  const wh = Number.isFinite(windowHours) ? Math.max(1, Math.min(24, windowHours)) : 3;
+  const surfBaseTimeMs = dateParam ? resolveDateParamToMs(dateParam) ?? undefined : undefined;
 
   const includeSurf = !activityType || activityType === "all" || activityType === "surf";
   const includeDb = !activityType || activityType === "all" || activityType !== "surf";
@@ -43,7 +140,7 @@ export async function GET(req: Request) {
   const [aqiRes, activitiesRes, surfSpots] = await Promise.allSettled([
     fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/air-quality?lat=${lat}&lon=${lon}`, { next: { revalidate: 600 } }),
     includeDb ? fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/activities-db?lat=${lat}&lon=${lon}&radiusKm=${radiusKm}${activityType && activityType !== "all" && activityType !== "surf" ? `&activityType=${activityType}` : ""}`) : Promise.resolve(null),
-    includeSurf ? getScoredSurfSpots(lat, lon, 60) : Promise.resolve([]),
+    includeSurf ? getScoredSurfSpots(lat, lon, 60, surfBaseTimeMs) : Promise.resolve([]),
   ]);
 
   let aqi: number | null = null;
@@ -95,13 +192,29 @@ export async function GET(req: Request) {
   const weatherData = await weatherRes.json();
   const weatherArray = Array.isArray(weatherData) ? weatherData : [weatherData];
   const searchWeather = weatherArray[0];
+  let baseTimeMs: number | undefined;
+  let dateStr: string | undefined;
+
+  if (dateParam) {
+    const resolved = resolveBaseTime(searchWeather.hourly.time, dateParam, searchWeather.daily?.sunrise);
+    if (!resolved) {
+      return NextResponse.json({ error: "Invalid or unavailable date" }, { status: 400 });
+    }
+    baseTimeMs = resolved.baseTimeMs;
+    dateStr = resolved.dateStr;
+  }
 
   // Phase 3: Score each activity
   const scoredActivities = candidates.map((activity, i) => {
     const weatherIdx = activityToLocIndex[i];
     const specificWeather = weatherArray[weatherIdx] || searchWeather;
     
-    const score = computeActivityScore(activity.activityId, activity.name, specificWeather, wh);
+    const activityWh = getActivityWindowHours(activity.activityId, wh);
+    const score = computeActivityScore(activity.activityId, activity.name, specificWeather, activityWh, baseTimeMs, dateStr);
+    if (activity.isSurf && !score.bestHourISO) {
+      const fallbackIso = pickBestHourISO(specificWeather.hourly.time, baseTimeMs, dateStr);
+      if (fallbackIso) score.bestHourISO = fallbackIso;
+    }
     
     // For surf spots, use the surf-specific score and reasons from scoreSurfSpot
     if (activity.isSurf) {
@@ -127,10 +240,17 @@ export async function GET(req: Request) {
                 weathercode: [specificWeather.hourly.weathercode?.[hourIdx] ?? 0],
                 cape: [specificWeather.hourly.cape?.[hourIdx] ?? 0],
             };
-            const sunrise = specificWeather.daily?.sunrise?.[0];
-            const sunset = specificWeather.daily?.sunset?.[0];
+            let sunrise = specificWeather.daily?.sunrise?.[0];
+            let sunset = specificWeather.daily?.sunset?.[0];
+            if (dateStr && specificWeather.daily?.sunrise && specificWeather.daily?.sunset) {
+                const sunIdx = specificWeather.daily.sunrise.findIndex((sr: string) => sr.startsWith(dateStr));
+                if (sunIdx !== -1) {
+                    sunrise = specificWeather.daily.sunrise[sunIdx];
+                    sunset = specificWeather.daily.sunset[sunIdx];
+                }
+            }
             
-            bestHourConditions = computeConditions(miniHourly, 1, aqi, sunrise, sunset);
+            bestHourConditions = computeConditions(miniHourly, 1, aqi, sunrise, sunset, baseTimeMs, dateStr);
             bestHourConditions.timeISO = score.bestHourISO;
             
             if (activity.isSurf && activity.conditions) {
@@ -160,11 +280,25 @@ export async function GET(req: Request) {
     };
   }).filter((a): a is NonNullable<typeof a> => a !== null);
 
-  const conditions = computeConditions(searchWeather.hourly, wh, aqi, searchWeather.daily?.sunrise?.[0], searchWeather.daily?.sunset?.[0]);
+  let sunrise: string | undefined;
+  let sunset: string | undefined;
+  if (dateStr && searchWeather.daily?.sunrise && searchWeather.daily?.sunset) {
+    const sunIdx = searchWeather.daily.sunrise.findIndex((sr: string) => sr.startsWith(dateStr));
+    if (sunIdx !== -1) {
+      sunrise = searchWeather.daily.sunrise[sunIdx];
+      sunset = searchWeather.daily.sunset[sunIdx];
+    }
+  } else {
+    sunrise = searchWeather.daily?.sunrise?.[0];
+    sunset = searchWeather.daily?.sunset?.[0];
+  }
 
-  const now = Date.now();
+  const conditions = computeConditions(searchWeather.hourly, wh, aqi, sunrise, sunset, baseTimeMs, dateStr);
+
+  const now = typeof baseTimeMs === "number" ? baseTimeMs : Date.now();
   const preview: RecommendationsResponse["hourlyPreview"] = [];
   for (let i = 0; i < searchWeather.hourly.time.length && preview.length < wh; i++) {
+    if (dateStr && !searchWeather.hourly.time[i].startsWith(dateStr)) continue;
     const t = new Date(searchWeather.hourly.time[i]).getTime();
     if (t < now) continue;
 
