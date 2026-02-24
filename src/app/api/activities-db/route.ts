@@ -63,7 +63,7 @@ export async function GET(req: Request) {
 
   if (activityType) {
     const activityLike =
-      activityType === "running" ? "%Running%" :
+      activityType === "run" ? "%Running%" :
       activityType === "mtb" ? "%Mountain Biking%" :
       activityType === "bike" ? "%Cycling%" :
       "%Hiking%";

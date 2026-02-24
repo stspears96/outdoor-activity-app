@@ -10,7 +10,6 @@ function lerp(a: number, b: number, t: number) {
 }
 
 const ACTIVITY_WINDOW_HOURS: Partial<Record<ActivityId, number>> = {
-  walk: 3,
   run: 3,
   hike: 3,
   bike: 3,
@@ -99,7 +98,6 @@ export function computeActivityScore(
 
   // Default preferences by activity
   const prefs: Record<ActivityId, { temp: [number, number, number, number]; wind: [number, number]; precipWeight: number; windWeight: number; tempWeight: number; daytime: boolean }> = {
-    walk:   { temp: [45, 55, 75, 90], wind: [18, 28], precipWeight: 0.45, windWeight: 0.20, tempWeight: 0.35, daytime: false },
     run:    { temp: [40, 50, 70, 85], wind: [15, 25], precipWeight: 0.40, windWeight: 0.25, tempWeight: 0.35, daytime: true },
     hike:   { temp: [40, 55, 75, 90], wind: [18, 30], precipWeight: 0.50, windWeight: 0.15, tempWeight: 0.35, daytime: true },
     bike:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.45, windWeight: 0.30, tempWeight: 0.25, daytime: true },

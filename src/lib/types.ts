@@ -1,5 +1,4 @@
 export type ActivityId =
-  | "walk"
   | "run"
   | "hike"
   | "bike"

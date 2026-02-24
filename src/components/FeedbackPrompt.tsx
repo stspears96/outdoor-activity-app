@@ -6,7 +6,6 @@ import type { PendingSession } from "@/lib/learning/types";
 import { getWindDirBucket } from "@/lib/learning/buckets";
 
 const ACTIVITY_NAMES: Record<ActivityId, string> = {
-  walk: "Walk",
   run: "Run",
   hike: "Hike",
   bike: "Cycling",
