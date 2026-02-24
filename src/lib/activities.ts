@@ -6,6 +6,5 @@ export const ACTIVITY_CATALOG: Array<{ id: ActivityId; name: string }> = [
   { id: "bike", name: "Cycling" },
   { id: "mtb", name: "Mountain Bike" },
   { id: "picnic", name: "Picnic" },
-  { id: "cafe", name: "Outdoor café" },
   { id: "surf", name: "Surf" },
 ];

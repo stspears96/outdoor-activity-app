@@ -4,7 +4,7 @@ import type { ActivityId } from "@/lib/types";
 import type { BetaParams, AB } from "@/lib/learning/types";
 import { BUCKET_DIMS } from "@/lib/learning/buckets";
 
-const ACTIVITY_IDS: ActivityId[] = ["run", "hike", "bike", "mtb", "picnic", "cafe", "surf"];
+const ACTIVITY_IDS: ActivityId[] = ["run", "hike", "bike", "mtb", "picnic", "surf"];
 
 const ACTIVITY_LABELS: Record<ActivityId, string> = {
   run: "Run",
@@ -12,7 +12,6 @@ const ACTIVITY_LABELS: Record<ActivityId, string> = {
   bike: "Cycling",
   mtb: "MTB",
   picnic: "Picnic",
-  cafe: "Café",
   surf: "Surf",
 };
 

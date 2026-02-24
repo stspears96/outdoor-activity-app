@@ -442,7 +442,7 @@ export default function Page() {
             <span style={{ marginRight: 8, fontSize: 13, color: "#444" }}>Filter by:</span>
             <button
                 key="all"
-                onClick={() => { setActivityTypeFilter("all"); setMode("trails"); }}
+                onClick={() => { setActivityTypeFilter("all"); setMode("trails"); setSelectedPlaceType("park"); }}
                 style={{
                   padding: "6px 10px",
                   borderRadius: 8,
@@ -462,6 +462,10 @@ export default function Page() {
                   if (activity.id === 'surf') {
                     setMode('surf');
                     setActivityTypeFilter('surf');
+                  } else if (activity.id === 'picnic') {
+                    setMode('places');
+                    setSelectedPlaceType('park');
+                    setActivityTypeFilter('picnic');
                   } else {
                     setMode('trails');
                     setActivityTypeFilter(activity.id);

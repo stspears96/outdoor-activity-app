@@ -8,7 +8,7 @@ import { predictBeta } from "./betaModel";
 const STORAGE_KEY = "outdoor-app-learning";
 const FEEDBACK_DELAY_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-const ACTIVITY_IDS: ActivityId[] = ["run", "hike", "bike", "mtb", "picnic", "cafe", "surf"];
+const ACTIVITY_IDS: ActivityId[] = ["run", "hike", "bike", "mtb", "picnic", "surf"];
 
 // ─── Default / initial state ──────────────────────────────────────────────────
 

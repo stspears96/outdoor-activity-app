@@ -18,9 +18,9 @@ function buildOverpassQuery(type: PlaceType, lat: number, lon: number, radiusM: 
       'way["highway"="cycleway"]',
     ],
     cafe: [
-      'node["amenity"="cafe"]',
-      'way["amenity"="cafe"]',
-      'relation["amenity"="cafe"]',
+      'node["amenity"="cafe"]["outdoor_seating"="yes"]',
+      'way["amenity"="cafe"]["outdoor_seating"="yes"]',
+      'relation["amenity"="cafe"]["outdoor_seating"="yes"]',
     ],
     dogpark: [
       'node["leisure"="dog_park"]',

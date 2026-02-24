@@ -4,7 +4,6 @@ export type ActivityId =
   | "bike"
   | "mtb"
   | "picnic"
-  | "cafe"
   | "surf";
 
 export type ActivityScore = {

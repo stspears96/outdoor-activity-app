@@ -11,7 +11,6 @@ const ACTIVITY_NAMES: Record<ActivityId, string> = {
   bike: "Cycling",
   mtb: "Mountain Bike",
   picnic: "Picnic",
-  cafe: "Outdoor café",
   surf: "Surf",
 };
 

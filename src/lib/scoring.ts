@@ -15,7 +15,6 @@ const ACTIVITY_WINDOW_HOURS: Partial<Record<ActivityId, number>> = {
   bike: 3,
   mtb: 3,
   picnic: 3,
-  cafe: 3,
   surf: 3,
 };
 
@@ -103,7 +102,6 @@ export function computeActivityScore(
     bike:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.45, windWeight: 0.30, tempWeight: 0.25, daytime: true },
     mtb:    { temp: [40, 55, 75, 88], wind: [15, 25], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25, daytime: true },
     picnic: { temp: [50, 60, 78, 92], wind: [10, 20], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25, daytime: true },
-    cafe:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.55, windWeight: 0.15, tempWeight: 0.30, daytime: false },
     surf:   { temp: [45, 55, 75, 90], wind: [18, 30], precipWeight: 0.45, windWeight: 0.15, tempWeight: 0.40, daytime: true },
   };
 

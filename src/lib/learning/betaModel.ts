@@ -37,11 +37,10 @@ const PREFS: Record<ActivityId, {
   bike:   { temp: [45, 55, 75, 90], wind: [12, 22], daytime: true },
   mtb:    { temp: [40, 55, 75, 88], wind: [15, 25], daytime: true },
   picnic: { temp: [50, 60, 78, 92], wind: [10, 20], daytime: true },
-  cafe:   { temp: [45, 55, 75, 90], wind: [12, 22], daytime: false },
   surf:   { temp: [45, 55, 75, 90], wind: [18, 30], daytime: true },
 };
 
-const ACTIVITY_IDS: ActivityId[] = ["run", "hike", "bike", "mtb", "picnic", "cafe", "surf"];
+const ACTIVITY_IDS: ActivityId[] = ["run", "hike", "bike", "mtb", "picnic", "surf"];
 const CONCENTRATION = 10;
 
 // ─── Temp bucket midpoints ────────────────────────────────────────────────────
