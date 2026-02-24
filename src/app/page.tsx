@@ -300,7 +300,7 @@ export default function Page() {
     }
   }
 
-  async function loadGpxTrack(trackId: number, label: string) {
+  async function loadGpxTrack(trackId: string | number, label: string) {
     if (!canFetch) return;
 
     setSelectedTrailLabel(label);

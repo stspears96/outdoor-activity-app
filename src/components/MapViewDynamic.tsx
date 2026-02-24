@@ -30,6 +30,7 @@ export type SurfSpotMarker = {
     waveDirDeg?: number;
     tideHeightFt?: number;
     tideState?: "rising" | "falling" | "stable";
+    swellComponents?: import("@/lib/spectral").SpectralSwell[];
   };
 };
 
@@ -43,8 +44,9 @@ export type MapViewProps = {
   trailLines?: TrailLine[];
   surfSpots: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way" | "usfs", id: number | string, label: string) => void;
-  onLoadGpxTrack?: (trackId: number, label: string) => void;
+  onLoadGpxTrack?: (trackId: string | number, label: string) => void;
   onViewForecast?: (name: string, transectId: string, lat: number, lon: number) => void;
+  onLogSession?: (spotId: string, spotName: string, lat: number, lon: number) => void;
 };
 
 // IMPORTANT: resolve to the default export, not the module object

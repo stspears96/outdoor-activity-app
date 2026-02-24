@@ -1,12 +1,41 @@
 import type { Conditions, WeatherHourly } from "./types";
 
-function pickWindowIndices(time: string[], windowHours: number): number[] {
-  const now = Date.now();
+function pickWindowIndices(
+  time: string[],
+  windowHours: number,
+  baseTimeMs?: number,
+  dateStr?: string,
+): number[] {
+  const now = typeof baseTimeMs === "number" ? baseTimeMs : Date.now();
   const idxs: number[] = [];
   for (let i = 0; i < time.length; i++) {
+    if (dateStr && !time[i].startsWith(dateStr)) continue;
     const t = new Date(time[i]).getTime();
     if (t >= now) idxs.push(i);
     if (idxs.length >= windowHours) break;
+  }
+  if (idxs.length === 0 && time.length > 0) {
+    if (Number.isFinite(baseTimeMs)) {
+      let startIdx = -1;
+      for (let i = 0; i < time.length; i++) {
+        if (dateStr && !time[i].startsWith(dateStr)) continue;
+        const t = new Date(time[i]).getTime();
+        if (t >= (baseTimeMs as number)) {
+          startIdx = i;
+          break;
+        }
+      }
+      if (startIdx === -1) startIdx = Math.max(0, time.length - 1);
+      for (let i = startIdx; i < time.length && idxs.length < windowHours; i++) {
+        if (dateStr && !time[i].startsWith(dateStr)) continue;
+        idxs.push(i);
+      }
+    } else {
+      for (let i = 0; i < time.length && idxs.length < windowHours; i++) {
+        if (dateStr && !time[i].startsWith(dateStr)) continue;
+        idxs.push(i);
+      }
+    }
   }
   return idxs;
 }
@@ -35,10 +64,12 @@ export function computeConditions(
   windowHours: number,
   aqi: number | null,
   sunrise?: string,
-  sunset?: string
+  sunset?: string,
+  baseTimeMs?: number,
+  dateStr?: string
 ): Conditions {
-  const idxs = pickWindowIndices(hourly.time, windowHours);
-  const now = Date.now();
+  const idxs = pickWindowIndices(hourly.time, windowHours, baseTimeMs, dateStr);
+  const now = typeof baseTimeMs === "number" ? baseTimeMs : Date.now();
 
   // Temperature: avg apparent/temperature_2m over window
   const tempVals = idxs

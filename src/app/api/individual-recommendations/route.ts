@@ -10,7 +10,7 @@ function mapDbActivitiesToActivityId(dbActivities: string): ActivityId | null {
     if (lower.includes("hiking")) return "hike";
     if (lower.includes("running")) return "run";
     if (lower.includes("mountain biking")) return "mtb";
-    if (lower.includes("bike")) return "bike";
+    if (lower.includes("cycling")) return "bike";
     return null;
 }
 
@@ -18,8 +18,10 @@ function findHourIndex(times: string[], target: string): number {
   return times.findIndex(t => t === target);
 }
 
+// Snap to nearest 0.025° (~3 km) to match HRRR/NAM grid resolution,
+// avoiding redundant weather fetches for locations in the same model grid cell.
 function normCoord(c: number): number {
-    return Math.round(c * 1000) / 1000;
+  return Math.round(c / 0.025) * 0.025;
 }
 
 function dateFromMs(ms: number) {

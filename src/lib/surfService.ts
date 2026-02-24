@@ -3,6 +3,7 @@ import path from "node:path";
 import { fetchCdipLatest } from "./cdip";
 import { scoreSurfSpot, SurfConditions, SurfSpotParams } from "./surfScoring";
 import { fetchNearestTideStation, fetchTidePredictions } from "./noaa";
+import type { SpectralSwell } from "./spectral";
 
 const DB_PATH = path.join(process.cwd(), "data", "surfspots.sqlite");
 
@@ -22,6 +23,8 @@ export type ScoredSurfSpot = {
   swell_max_deg?: number;
   tide_preference?: string;
   cdip_transect_id?: string;
+  swellComponents?: SpectralSwell[];
+  bestHourISO?: string;
 };
 
 function haversineKm(aLat: number, aLon: number, bLat: number, bLon: number) {
@@ -44,7 +47,12 @@ function msToKnots(ms: number) {
  * Core logic to find, fetch data for, and score surf spots.
  * Can be called directly by API routes to avoid internal HTTP overhead.
  */
-export async function getScoredSurfSpots(lat: number, lon: number, radiusKm: number = 80): Promise<ScoredSurfSpot[]> {
+export async function getScoredSurfSpots(
+  lat: number,
+  lon: number,
+  radiusKm: number = 80,
+  baseTimeMs?: number
+): Promise<ScoredSurfSpot[]> {
   const latDelta = radiusKm / 111;
   const lonDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
 
@@ -81,8 +89,8 @@ export async function getScoredSurfSpots(lat: number, lon: number, radiusKm: num
   const lons = spots0.map(s => s.lon).join(",");
   
   const [windRes, marineRes] = await Promise.all([
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=UTC`).then(r => r.json()),
-    fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${lats}&longitude=${lons}&current=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period&cell_selection=sea&timezone=UTC`).then(r => r.json()),
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=UTC`).then(r => r.json()),
+    fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${lats}&longitude=${lons}&hourly=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period&cell_selection=sea&timezone=UTC`).then(r => r.json()),
   ]);
 
   const windArray = Array.isArray(windRes) ? windRes : [windRes];
@@ -114,26 +122,39 @@ export async function getScoredSurfSpots(lat: number, lon: number, radiusKm: num
     return { height: Number(closest.v), state };
   };
 
-  const nowMs = Date.now();
-  const currentTide = getTideAt(nowMs);
+  const targetMs = typeof baseTimeMs === "number" ? baseTimeMs : Date.now();
+  const currentTide = getTideAt(targetMs);
+
+  const pickHourIndex = (times?: string[]) => {
+    if (!times || times.length === 0) return -1;
+    for (let i = 0; i < times.length; i++) {
+      const t = new Date(times[i]).getTime();
+      if (t >= targetMs) return i;
+    }
+    return -1;
+  };
 
   return spots0.map((s, i) => {
-    const w = windArray[i]?.current;
-    const m = marineArray[i]?.current;
+    const w = windArray[i]?.hourly;
+    const m = marineArray[i]?.hourly;
     const cdip = s.cdip_transect_id ? cdipByTransect.get(s.cdip_transect_id) : null;
+    const windIdx = pickHourIndex(w?.time);
+    const marineIdx = pickHourIndex(m?.time);
+    const bestHourISO = (windIdx >= 0 ? w?.time?.[windIdx] : undefined) ?? (marineIdx >= 0 ? m?.time?.[marineIdx] : undefined);
 
     const cond: SurfConditions = {
-        windSpeedKts: w ? msToKnots(w.wind_speed_10m) : undefined,
-        windDirDeg: w?.wind_direction_10m,
-        waveHeightM: m?.wave_height,
-        waveDirDeg: m?.wave_direction,
-        wavePeriodS: m?.wave_period,
-        swellHeightM: cdip?.waveHs ?? m?.swell_wave_height,
-        swellDirDeg: cdip?.waveDm ?? m?.swell_wave_direction,
-        swellPeakPeriodS: cdip?.waveTp ?? m?.swell_wave_period ?? m?.wave_period,
+        windSpeedKts: windIdx >= 0 ? msToKnots(w?.wind_speed_10m?.[windIdx] ?? 0) : undefined,
+        windDirDeg: windIdx >= 0 ? w?.wind_direction_10m?.[windIdx] : undefined,
+        waveHeightM: marineIdx >= 0 ? m?.wave_height?.[marineIdx] : undefined,
+        waveDirDeg: marineIdx >= 0 ? m?.wave_direction?.[marineIdx] : undefined,
+        wavePeriodS: marineIdx >= 0 ? m?.wave_period?.[marineIdx] : undefined,
+        swellHeightM: cdip?.waveHs ?? (marineIdx >= 0 ? m?.swell_wave_height?.[marineIdx] : undefined),
+        swellDirDeg: cdip?.waveDm ?? (marineIdx >= 0 ? m?.swell_wave_direction?.[marineIdx] : undefined),
+        swellPeakPeriodS: cdip?.waveTp ?? (marineIdx >= 0 ? m?.swell_wave_period?.[marineIdx] : undefined) ?? (marineIdx >= 0 ? m?.wave_period?.[marineIdx] : undefined),
         swellAvgPeriodS: cdip?.waveTa,
         tideHeightFt: currentTide?.height,
         tideState: currentTide?.state as any,
+        swellComponents: cdip?.swellComponents,
     };
 
     const { score, quality, reasons } = scoreSurfSpot(s as SurfSpotParams, cond);
@@ -145,6 +166,8 @@ export async function getScoredSurfSpots(lat: number, lon: number, radiusKm: num
       reasons,
       conditions: cond,
       tideStation,
+      swellComponents: cdip?.swellComponents,
+      bestHourISO,
     };
   });
 }

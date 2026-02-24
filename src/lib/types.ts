@@ -112,12 +112,12 @@ export type TrailItem = {
   symbol?: string;
   ref?: string;
   osmUrl?: string;
-  source?: "osm" | "usfs" | "outbound";
+  source?: "osm" | "usfs" | "outbound" | "strava";
   miles?: number;
   trailClass?: number;
   elevationFt?: number;
   outboundUrl?: string;
-  gpxTrackId?: number;
+  gpxTrackId?: string | number;
   activities?: string;
 };
 

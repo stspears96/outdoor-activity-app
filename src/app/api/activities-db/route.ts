@@ -65,6 +65,7 @@ export async function GET(req: Request) {
     const activityLike =
       activityType === "running" ? "%Running%" :
       activityType === "mtb" ? "%Mountain Biking%" :
+      activityType === "bike" ? "%Cycling%" :
       "%Hiking%";
     sql += ` AND activities LIKE ?`;
     params.push(activityLike);
@@ -103,10 +104,11 @@ export async function GET(req: Request) {
     const distKm = haversineKm(lat, lon, row.latitude, row.longitude);
     if (distKm > radiusKm) continue;
 
+    const source = row.url?.includes("strava.com") ? "strava" as const : "outbound" as const;
     ranked.push({
-      id: `outbound:${row.id}`,
+      id: `${source}:${row.id}`,
       itemType: "hiking_route" as const,
-      source: "outbound" as const,
+      source,
       name: row.title,
       lat: row.latitude,
       lon: row.longitude,
@@ -126,6 +128,6 @@ export async function GET(req: Request) {
 
   return NextResponse.json(
     { items, count: items.length },
-    { headers: { "Cache-Control": "public, max-age=86400" } }
+    { headers: { "Cache-Control": "public, max-age=3600" } }
   );
 }

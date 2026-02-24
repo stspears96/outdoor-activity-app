@@ -9,7 +9,7 @@ const ACTIVITY_NAMES: Record<ActivityId, string> = {
   walk: "Walk",
   run: "Run",
   hike: "Hike",
-  bike: "Bike",
+  bike: "Cycling",
   mtb: "Mountain Bike",
   picnic: "Picnic",
   cafe: "Outdoor café",

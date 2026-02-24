@@ -15,16 +15,10 @@ const mockWeather: WeatherResponse = {
 };
 
 describe('scoreActivities', () => {
-  it('should return a list of activities including Bike', () => {
+  it('should return a list of activities including Cycling', () => {
     const activities = scoreActivities(mockWeather, 6);
-    const bikeActivity = activities.find(a => a.name === 'Bike');
+    const bikeActivity = activities.find(a => a.name === 'Cycling');
     expect(bikeActivity).toBeDefined();
-  });
-
-  it('should not include the old Mountain Bike activity', () => {
-    const activities = scoreActivities(mockWeather, 6);
-    const mountainBikeActivity = activities.find(a => a.name === 'Mountain Bike');
-    expect(mountainBikeActivity).toBeUndefined();
   });
 
   it('should return a score for each activity', () => {

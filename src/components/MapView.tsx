@@ -114,8 +114,9 @@ export default function MapView(props: {
   trailLines?: TrailLine[];
   surfSpots?: SurfSpotMarker[];
   onLoadTrailLine?: (refType: "relation" | "way" | "usfs", id: number | string, label: string) => void;
-  onLoadGpxTrack?: (trackId: number, label: string) => void;
+  onLoadGpxTrack?: (trackId: string | number, label: string) => void;
   onViewForecast?: (name: string, transectId: string, lat: number, lon: number) => void;
+  onLogSession?: (spotId: string, spotName: string, lat: number, lon: number) => void;
 }) {
   const {
     lat,
@@ -157,7 +158,7 @@ export default function MapView(props: {
 
 	  // Prefer swell; fall back to wave
 	  const swellH = s.conditions?.swellHeightM ?? s.conditions?.waveHeightM;
-	  const swellP = s.conditions?.swellPeakPeriodS ?? s.conditions?.swellPeriodS ?? s.conditions?.wavePeriodS;
+	  const swellP = s.conditions?.swellPeakPeriodS ?? s.conditions?.wavePeriodS;
       const swellTa = s.conditions?.swellAvgPeriodS;
 
 	  const tideHeightFt = s.conditions?.tideHeightFt;
@@ -226,6 +227,24 @@ export default function MapView(props: {
 		      View Forecast
 		    </button>
 		  ) : null}
+
+		  {props.onLogSession ? (
+		    <button
+		      onClick={() => props.onLogSession!(s.id, s.name, s.lat, s.lon)}
+		      style={{
+			marginTop: 6,
+			padding: "6px 8px",
+			borderRadius: 10,
+			border: "1px solid #ddd",
+			background: "white",
+			cursor: "pointer",
+			fontSize: 12,
+			display: "block",
+		      }}
+		    >
+		      Log Session
+		    </button>
+		  ) : null}
 		</Popup>
 	      </Marker>
 	      {typeof windArrowCssDeg === "number" ? (
@@ -287,6 +306,10 @@ export default function MapView(props: {
                   <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#e07b2a", color: "white" }}>
                     Outbound
                   </span>
+                ) : t.source === "strava" ? (
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#fc4c02", color: "white" }}>
+                    Strava
+                  </span>
                 ) : null}
               </div>
 
@@ -307,7 +330,11 @@ export default function MapView(props: {
                 </div>
               ) : null}
 
-              {t.source === "outbound" && t.outboundUrl ? (
+              {t.source === "strava" && t.outboundUrl ? (
+                <a href={t.outboundUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: "inline-block", marginTop: 6 }}>
+                  View on Strava
+                </a>
+              ) : t.source === "outbound" && t.outboundUrl ? (
                 <a href={t.outboundUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, display: "inline-block", marginTop: 6 }}>
                   View on The Outbound
                 </a>
@@ -317,7 +344,7 @@ export default function MapView(props: {
                 </a>
               ) : null}
 
-              {t.source === "outbound" && t.gpxTrackId ? (
+              {(t.source === "outbound" || t.source === "strava") && t.gpxTrackId ? (
                 <button
                   onClick={() => props.onLoadGpxTrack?.(t.gpxTrackId!, t.name)}
                   style={{

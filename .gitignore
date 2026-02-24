@@ -42,3 +42,9 @@ next-env.d.ts
 
 # generated databases
 data/*.sqlite
+
+# secrets
+data/strava_tokens.json
+
+# logs
+test.log

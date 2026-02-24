@@ -1,3 +1,5 @@
+import type { SpectralSwell } from "./spectral";
+
 // ---------- helpers ----------
 function inDegWindow(deg: number, minDeg: number, maxDeg: number) {
   const d = ((deg % 360) + 360) % 360;
@@ -42,6 +44,7 @@ export type SurfConditions = {
   swellDirDeg?: number;
   tideHeightFt?: number;
   tideState?: "rising" | "falling" | "stable";
+  swellComponents?: SpectralSwell[];
 };
 
 export type SurfSpotParams = {
@@ -64,9 +67,30 @@ export function scoreSurfSpot(
   const windDir = cond.windDirDeg;
   const windKts = cond.windSpeedKts;
 
-  const swellDir = cond.swellDirDeg ?? cond.waveDirDeg;
-  const swellH   = cond.swellHeightM ?? cond.waveHeightM;
-  const swellP   = cond.swellPeakPeriodS ?? cond.wavePeriodS;
+  // Resolve swell scalars — either from spectral components or bulk fields
+  let swellDir: number | undefined;
+  let swellH: number | undefined;
+  let swellP: number | undefined;
+  let spreadingDeg: number | undefined;
+
+  if (cond.swellComponents && cond.swellComponents.length > 0) {
+    // Find best in-window component: highest Hs whose direction is in the swell window
+    let best = cond.swellComponents[0]; // highest Hs overall (sorted desc)
+    if (params.swell_min_deg != null && params.swell_max_deg != null) {
+      const inWindow = cond.swellComponents.find((c) =>
+        inDegWindow(c.dirDeg, params.swell_min_deg!, params.swell_max_deg!)
+      );
+      if (inWindow) best = inWindow;
+    }
+    swellH   = best.Hs;
+    swellP   = best.Tp;
+    swellDir = best.dirDeg;
+    spreadingDeg = best.spreadingDeg;
+  } else {
+    swellDir = cond.swellDirDeg ?? cond.waveDirDeg;
+    swellH   = cond.swellHeightM ?? cond.waveHeightM;
+    swellP   = cond.swellPeakPeriodS ?? cond.wavePeriodS;
+  }
 
   // ── Wind direction ──
   if (typeof windDir === "number" && params.wind_offshore_min_deg != null && params.wind_offshore_max_deg != null) {
@@ -133,6 +157,17 @@ export function scoreSurfSpot(
 
     if (parts.length > 0) {
         reasons.push(`Swell: ${parts.join(", ")}`);
+    }
+  }
+
+  // ── Directional spreading (only when spectral components available) ──
+  if (typeof spreadingDeg === "number") {
+    if (spreadingDeg < 25) {
+      score += 6;
+      reasons.push("Organized swell ✅");
+    } else if (spreadingDeg > 45) {
+      score -= 6;
+      reasons.push("Choppy/wind swell ⚠️");
     }
   }
 

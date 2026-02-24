@@ -8,7 +8,8 @@
     "start": "next start",
     "test": "jest",
     "lint": "eslint",
-    "seed": "tsx scripts/seed-surfspots.ts"
+    "seed": "tsx scripts/seed-surfspots.ts",
+    "seed-strava": "tsx scripts/seed-strava.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

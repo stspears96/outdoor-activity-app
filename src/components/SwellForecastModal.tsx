@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import type { WeatherResponse } from "@/lib/types";
 import { scoreSurfSpot, SurfConditions, qualityToColor } from "@/lib/surfScoring";
+import type { SpectralSwell } from "@/lib/spectral";
 
 type CdipPoint = {
   time: string;
@@ -22,6 +23,7 @@ type CdipPoint = {
   waveTa: number | null;
   waveDp: number | null;
   waveDm: number | null;
+  swellComponents?: SpectralSwell[];
 };
 
 type TidePoint = {
@@ -65,6 +67,12 @@ function lerpAngle(a: number, b: number, t: number) {
 }
 
 
+const CARDINAL_16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+function toCardinal(deg: number): string {
+  const i = Math.round(((deg % 360) + 360) % 360 / 22.5) % 16;
+  return CARDINAL_16[i];
+}
+
 const QUALITY_LEVELS = [
   { label: "Poor", color: "#ef4444" },
   { label: "Fair", color: "#f59e0b" },
@@ -86,6 +94,7 @@ export default function SwellForecastModal(props: {
 }) {
   const { name, transectId, lat, lon, onClose, wind_offshore_min_deg, wind_offshore_max_deg, swell_min_deg, swell_max_deg, tide_preference } = props;
   const [data, setData] = useState<ChartRow[] | null>(null);
+  const [latestSwellComponents, setLatestSwellComponents] = useState<SpectralSwell[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(Date.now());
@@ -112,6 +121,10 @@ export default function SwellForecastModal(props: {
 
         const nowcastJson = await nowcastRes.json();
         const nowcastPoints: CdipPoint[] = (nowcastJson.points ?? []).sort((a: any, b: any) => Date.parse(a.time) - Date.parse(b.time));
+
+        // Extract latest swell components from the most recent point that has them
+        const latestWithComponents = [...nowcastPoints].reverse().find((p) => p.swellComponents && p.swellComponents.length > 0);
+        if (!cancelled) setLatestSwellComponents(latestWithComponents?.swellComponents ?? null);
 
         let forecastPoints: CdipPoint[] = [];
         if (forecastRes.ok) {
@@ -426,6 +439,50 @@ export default function SwellForecastModal(props: {
                 <ReferenceLine x={nowMs} stroke="red" strokeWidth={1.5} strokeDasharray="3 3" />
               </ComposedChart>
             </ResponsiveContainer>
+
+            {/* Swell Breakdown panel */}
+            {latestSwellComponents && latestSwellComponents.length > 0 && (
+              <div style={{
+                marginTop: 16,
+                border: "1px solid #e2e8f0",
+                borderRadius: 8,
+                padding: "10px 14px",
+                background: "#f8fafc",
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 6 }}>
+                  Swell Breakdown (latest nowcast)
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {latestSwellComponents.map((s, idx) => {
+                    const htFt = (s.Hs * 3.281).toFixed(1);
+                    const periodS = s.Tp.toFixed(0);
+                    const cardinal = toCardinal(s.dirDeg);
+                    const dirDeg = Math.round(s.dirDeg);
+                    const spreadDeg = Math.round(s.spreadingDeg);
+                    const label = s.isWindSea ? "Wind swell" : "Groundswell";
+                    const pillColor = s.isWindSea ? "#94a3b8" : "#0077cc";
+                    return (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                        <span style={{ fontWeight: 700, color: "#334155", minWidth: 16 }}>#{idx + 1}</span>
+                        <span style={{ fontWeight: 600, color: "#1e293b", minWidth: 44 }}>{htFt} ft</span>
+                        <span style={{ color: "#475569", minWidth: 30 }}>{periodS}s</span>
+                        <span style={{ color: "#475569", minWidth: 72 }}>{cardinal} {dirDeg}°</span>
+                        <span style={{ color: "#64748b", minWidth: 70 }}>spread {spreadDeg}°</span>
+                        <span style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          padding: "1px 7px",
+                          borderRadius: 20,
+                          background: pillColor,
+                          color: "#fff",
+                          whiteSpace: "nowrap",
+                        }}>{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 4, textAlign: 'center' }}>

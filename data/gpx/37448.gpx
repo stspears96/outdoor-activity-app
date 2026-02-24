@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.1" creator="The Outbound Collective, Inc. 1.1.1 -- https://www.theoutbound.com" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name/>
+    <time>2026-02-19T21:56:46+00:00</time>
+    <bound minlat="34.52840925" minlon="-120.176535845" maxlat="34.531988928" maxlon="-120.172533989"/>
+  </metadata>
+  <trk>
+    <name/>
+    <trkseg>
+      <trkpt lat="34.531988928" lon="-120.176535845">
+        <ele>231.0</ele>
+      </trkpt>
+      <trkpt lat="34.531096232" lon="-120.176428556">
+        <ele>243.0</ele>
+      </trkpt>
+      <trkpt lat="34.530760364" lon="-120.176514387">
+        <ele>245.0</ele>
+      </trkpt>
+      <trkpt lat="34.530415656" lon="-120.176417828">
+        <ele>254.0</ele>
+      </trkpt>
+      <trkpt lat="34.530070947" lon="-120.176181793">
+        <ele>256.0</ele>
+      </trkpt>
+      <trkpt lat="34.529814623" lon="-120.175645351">
+        <ele>259.0</ele>
+      </trkpt>
+      <trkpt lat="34.529708558" lon="-120.1752913">
+        <ele>261.0</ele>
+      </trkpt>
+      <trkpt lat="34.529903011" lon="-120.173982382">
+        <ele>276.0</ele>
+      </trkpt>
+      <trkpt lat="34.529558299" lon="-120.173338652">
+        <ele>284.0</ele>
+      </trkpt>
+      <trkpt lat="34.529275458" lon="-120.173220634">
+        <ele>280.0</ele>
+      </trkpt>
+      <trkpt lat="34.529081004" lon="-120.172780752">
+        <ele>298.0</ele>
+      </trkpt>
+      <trkpt lat="34.528842355" lon="-120.172533989">
+        <ele>311.0</ele>
+      </trkpt>
+      <trkpt lat="34.52840925" lon="-120.172533989">
+        <ele>331.0</ele>
+      </trkpt>
+      <trkpt lat="34.528842355" lon="-120.172544718">
+        <ele>311.0</ele>
+      </trkpt>
+      <trkpt lat="34.529063326" lon="-120.172748566">
+        <ele>298.0</ele>
+      </trkpt>
+      <trkpt lat="34.529301974" lon="-120.173274279">
+        <ele>280.0</ele>
+      </trkpt>
+      <trkpt lat="34.529540622" lon="-120.173306465">
+        <ele>284.0</ele>
+      </trkpt>
+      <trkpt lat="34.529929527" lon="-120.173993111">
+        <ele>276.0</ele>
+      </trkpt>
+      <trkpt lat="34.529673203" lon="-120.175269842">
+        <ele>261.0</ele>
+      </trkpt>
+      <trkpt lat="34.529911849" lon="-120.175913572">
+        <ele>257.0</ele>
+      </trkpt>
+      <trkpt lat="34.530053269" lon="-120.176171064">
+        <ele>256.0</ele>
+      </trkpt>
+      <trkpt lat="34.530406817" lon="-120.176450014">
+        <ele>254.0</ele>
+      </trkpt>
+      <trkpt lat="34.530831073" lon="-120.176492929">
+        <ele>245.0</ele>
+      </trkpt>
+      <trkpt lat="34.531352552" lon="-120.176471472">
+        <ele>242.0</ele>
+      </trkpt>
+      <trkpt lat="34.531988928" lon="-120.176514387">
+        <ele>232.0</ele>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

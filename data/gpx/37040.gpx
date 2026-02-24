@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.1" creator="The Outbound Collective, Inc. 1.1.1 -- https://www.theoutbound.com" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name/>
+    <time>2026-02-19T21:54:38+00:00</time>
+    <bound minlat="38.24567733557056" minlon="-119.2053186893463" maxlat="38.2458692655232" maxlon="-119.2039870852746"/>
+  </metadata>
+  <trk>
+    <name/>
+    <trkseg>
+      <trkpt lat="38.24580817688553" lon="-119.203996360302">
+        <ele>2067.0</ele>
+      </trkpt>
+      <trkpt lat="38.24580388630259" lon="-119.2039870852746">
+        <ele>2067.0</ele>
+      </trkpt>
+      <trkpt lat="38.2458" lon="-119.20399">
+        <ele>2067.0</ele>
+      </trkpt>
+      <trkpt lat="38.24568" lon="-119.20417">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.24568" lon="-119.20417">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.24574" lon="-119.20428">
+        <ele>2064.0</ele>
+      </trkpt>
+      <trkpt lat="38.24574962150187" lon="-119.2044339440299">
+        <ele>2061.0</ele>
+      </trkpt>
+      <trkpt lat="38.2458692655232" lon="-119.2053186893463">
+        <ele>2058.0</ele>
+      </trkpt>
+      <trkpt lat="38.24575551422561" lon="-119.2044550180435">
+        <ele>2061.0</ele>
+      </trkpt>
+      <trkpt lat="38.24573444915097" lon="-119.2042458057404">
+        <ele>2064.0</ele>
+      </trkpt>
+      <trkpt lat="38.24572561154479" lon="-119.2042536211572">
+        <ele>2064.0</ele>
+      </trkpt>
+      <trkpt lat="38.24568" lon="-119.20417">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.24568" lon="-119.20417">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.24567733557056" lon="-119.2041708881432">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.24567733557215" lon="-119.2041708881432">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.24568" lon="-119.20417">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.24568" lon="-119.20417">
+        <ele>2066.0</ele>
+      </trkpt>
+      <trkpt lat="38.2458" lon="-119.20399">
+        <ele>2067.0</ele>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

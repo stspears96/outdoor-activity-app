@@ -9,6 +9,22 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
+const ACTIVITY_WINDOW_HOURS: Partial<Record<ActivityId, number>> = {
+  walk: 3,
+  run: 3,
+  hike: 3,
+  bike: 3,
+  mtb: 3,
+  picnic: 3,
+  cafe: 3,
+  surf: 3,
+};
+
+export function getActivityWindowHours(id: ActivityId, defaultHours: number) {
+  const raw = typeof ACTIVITY_WINDOW_HOURS[id] === "number" ? ACTIVITY_WINDOW_HOURS[id]! : defaultHours;
+  return clamp(raw, 1, 24);
+}
+
 // Score a value where "best" is a band [bestLo, bestHi] and drops outside.
 function bandScore(x: number, bestLo: number, bestHi: number, minLo: number, maxHi: number) {
   if (x >= bestLo && x <= bestHi) return 1;
@@ -16,14 +32,43 @@ function bandScore(x: number, bestLo: number, bestHi: number, minLo: number, max
   return clamp((maxHi - x) / (maxHi - bestHi), 0, 1);
 }
 
-function pickHourIndices(weather: WeatherResponse, windowHours: number) {
+function pickHourIndices(
+  weather: WeatherResponse,
+  windowHours: number,
+  baseTimeMs?: number,
+  dateStr?: string,
+) {
   const times = weather.hourly.time;
-  const now = Date.now();
+  const now = typeof baseTimeMs === "number" ? baseTimeMs : Date.now();
   const idxs: number[] = [];
   for (let i = 0; i < times.length; i++) {
+    if (dateStr && !times[i].startsWith(dateStr)) continue;
     const t = new Date(times[i]).getTime();
     if (t >= now) idxs.push(i);
     if (idxs.length >= windowHours) break;
+  }
+  if (idxs.length === 0 && times.length > 0) {
+    if (Number.isFinite(baseTimeMs)) {
+      let startIdx = -1;
+      for (let i = 0; i < times.length; i++) {
+        if (dateStr && !times[i].startsWith(dateStr)) continue;
+        const t = new Date(times[i]).getTime();
+        if (t >= (baseTimeMs as number)) {
+          startIdx = i;
+          break;
+        }
+      }
+      if (startIdx === -1) startIdx = Math.max(0, times.length - 1);
+      for (let i = startIdx; i < times.length && idxs.length < windowHours; i++) {
+        if (dateStr && !times[i].startsWith(dateStr)) continue;
+        idxs.push(i);
+      }
+    } else {
+      for (let i = 0; i < times.length && idxs.length < windowHours; i++) {
+        if (dateStr && !times[i].startsWith(dateStr)) continue;
+        idxs.push(i);
+      }
+    }
   }
   return idxs;
 }
@@ -47,8 +92,10 @@ export function computeActivityScore(
   name: string,
   weather: WeatherResponse,
   windowHours: number,
+  baseTimeMs?: number,
+  dateStr?: string,
 ): ActivityScore {
-  const idxs = pickHourIndices(weather, windowHours);
+  const idxs = pickHourIndices(weather, windowHours, baseTimeMs, dateStr);
 
   // Default preferences by activity
   const prefs: Record<ActivityId, { temp: [number, number, number, number]; wind: [number, number]; precipWeight: number; windWeight: number; tempWeight: number; daytime: boolean }> = {
@@ -131,9 +178,17 @@ export function computeActivityScore(
   return { id, name, score: finalScore, why, bestHourISO };
 }
 
-export function scoreActivities(weather: WeatherResponse, windowHours: number) {
+export function scoreActivities(
+  weather: WeatherResponse,
+  windowHours: number,
+  baseTimeMs?: number,
+  dateStr?: string,
+) {
   const activities = ACTIVITY_CATALOG
-    .map(a => computeActivityScore(a.id, a.name, weather, windowHours))
+    .map(a => {
+      const wh = getActivityWindowHours(a.id, windowHours);
+      return computeActivityScore(a.id, a.name, weather, wh, baseTimeMs, dateStr);
+    })
     .sort((a, b) => b.score - a.score);
 
   return activities;

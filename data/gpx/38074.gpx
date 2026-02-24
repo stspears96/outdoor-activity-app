@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" version="1.1" creator="The Outbound Collective, Inc. 1.1.1 -- https://www.theoutbound.com" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name/>
+    <time>2026-02-19T21:59:08+00:00</time>
+    <bound minlat="34.03034" minlon="-118.5127006934269" maxlat="34.03067296481682" maxlon="-118.512227833271"/>
+  </metadata>
+  <trk>
+    <name/>
+    <trkseg>
+      <trkpt lat="34.0303493143944" lon="-118.512227833271">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03034742355464" lon="-118.5122298980715">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03037" lon="-118.51226">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03034" lon="-118.5123">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03039" lon="-118.51238">
+        <ele>45.0</ele>
+      </trkpt>
+      <trkpt lat="34.03067296478842" lon="-118.5127006934269">
+        <ele>39.0</ele>
+      </trkpt>
+      <trkpt lat="34.03067296481682" lon="-118.5127006934269">
+        <ele>39.0</ele>
+      </trkpt>
+      <trkpt lat="34.03039" lon="-118.51238">
+        <ele>45.0</ele>
+      </trkpt>
+      <trkpt lat="34.03034" lon="-118.5123">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03037" lon="-118.51226">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03034642271707" lon="-118.5122285636228">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03034642271797" lon="-118.5122285636228">
+        <ele>46.0</ele>
+      </trkpt>
+      <trkpt lat="34.03034642271707" lon="-118.5122285636228">
+        <ele>46.0</ele>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
