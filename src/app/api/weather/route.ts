@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import type { WeatherResponse, WeatherHourly } from "@/lib/types";
 
-const HOURLY_FIELDS: (keyof WeatherHourly)[] = [
+type NumericHourlyField = Exclude<keyof WeatherHourly, "time">;
+
+const HOURLY_FIELDS: NumericHourlyField[] = [
   "temperature_2m",
   "apparent_temperature",
   "precipitation_probability",

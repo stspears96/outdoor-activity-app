@@ -1,5 +1,6 @@
 import type { ActivityId, ActivityScore, WeatherResponse } from "./types";
 import { ACTIVITY_CATALOG } from "./activities";
+import { rawScoreToPercentile } from "./percentiles";
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -78,11 +79,57 @@ function mphToPenalty(mph: number, soft: number, hard: number) {
   return clamp(1 - (mph - soft) / (hard - soft), 0, 1);
 }
 
-function precipToPenalty(p: number) {
-  // p is probability 0-100
-  if (p <= 10) return 1;
-  if (p >= 70) return 0;
-  return clamp(1 - (p - 10) / 60, 0, 1);
+// Penalty from actual precipitation in inches/hr.
+// 0 in/hr → 1.0 (dry), 0.2+ in/hr → 0.0 (moderate rain).
+function precipToPenalty(inHr: number) {
+  if (inHr <= 0) return 1;
+  if (inHr >= 0.2) return 0;
+  return clamp(1 - inHr / 0.2, 0, 1);
+}
+
+// Per-activity scoring preferences.
+// temp: [minLo, bestLo, bestHi, maxHi] in °F — narrower ideal bands = more score spread
+// cloudIdeal: [lo, hi] in % — ideal cloud cover range for the activity
+// weights must sum to 1.0
+const ACTIVITY_PREFS: Record<
+  ActivityId,
+  {
+    temp: [number, number, number, number];
+    cloudIdeal: [number, number];
+    wind: [number, number];
+    precipWeight: number;
+    windWeight: number;
+    tempWeight: number;
+    cloudWeight: number;
+  }
+> = {
+  //                temp band (°F)        cloud ideal    wind (mph)  precip  wind  temp  cloud
+  run:    { temp: [40, 55, 65, 82], cloudIdeal: [20, 50], wind: [15, 25], precipWeight: 0.35, windWeight: 0.22, tempWeight: 0.31, cloudWeight: 0.12 },
+  hike:   { temp: [42, 58, 70, 88], cloudIdeal: [20, 60], wind: [18, 30], precipWeight: 0.44, windWeight: 0.13, tempWeight: 0.31, cloudWeight: 0.12 },
+  bike:   { temp: [45, 58, 70, 88], cloudIdeal: [10, 40], wind: [12, 22], precipWeight: 0.40, windWeight: 0.26, tempWeight: 0.22, cloudWeight: 0.12 },
+  mtb:    { temp: [40, 55, 68, 85], cloudIdeal: [20, 70], wind: [15, 25], precipWeight: 0.50, windWeight: 0.18, tempWeight: 0.22, cloudWeight: 0.10 },
+  picnic: { temp: [52, 65, 75, 90], cloudIdeal: [0,  25], wind: [10, 20], precipWeight: 0.47, windWeight: 0.17, tempWeight: 0.21, cloudWeight: 0.15 },
+  surf:   { temp: [48, 58, 68, 88], cloudIdeal: [0,  30], wind: [18, 30], precipWeight: 0.40, windWeight: 0.13, tempWeight: 0.35, cloudWeight: 0.12 },
+};
+
+/**
+ * Compute the raw 0–1 score for an activity given specific conditions.
+ * No nighttime penalty is applied here — that is handled separately.
+ * This function is used both in live scoring and by the calibration script.
+ */
+export function computeRawScore(
+  id: ActivityId,
+  tempF: number,
+  windMph: number,
+  precipInHr: number,
+  cloudPct: number,
+): number {
+  const p = ACTIVITY_PREFS[id];
+  const tComp  = bandScore(tempF,     p.temp[1],        p.temp[2],        p.temp[0], p.temp[3]);
+  const wComp  = mphToPenalty(windMph, p.wind[0], p.wind[1]);
+  const prComp = precipToPenalty(precipInHr);
+  const cComp  = bandScore(cloudPct,  p.cloudIdeal[0],  p.cloudIdeal[1],  0,         100);
+  return p.tempWeight * tComp + p.windWeight * wComp + p.precipWeight * prComp + p.cloudWeight * cComp;
 }
 
 export function computeActivityScore(
@@ -95,83 +142,37 @@ export function computeActivityScore(
 ): ActivityScore {
   const idxs = pickHourIndices(weather, windowHours, baseTimeMs, dateStr);
 
-  // Default preferences by activity
-  const prefs: Record<ActivityId, { temp: [number, number, number, number]; wind: [number, number]; precipWeight: number; windWeight: number; tempWeight: number; daytime: boolean }> = {
-    run:    { temp: [40, 50, 70, 85], wind: [15, 25], precipWeight: 0.40, windWeight: 0.25, tempWeight: 0.35, daytime: true },
-    hike:   { temp: [40, 55, 75, 90], wind: [18, 30], precipWeight: 0.50, windWeight: 0.15, tempWeight: 0.35, daytime: true },
-    bike:   { temp: [45, 55, 75, 90], wind: [12, 22], precipWeight: 0.45, windWeight: 0.30, tempWeight: 0.25, daytime: true },
-    mtb:    { temp: [40, 55, 75, 88], wind: [15, 25], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25, daytime: true },
-    picnic: { temp: [50, 60, 78, 92], wind: [10, 20], precipWeight: 0.55, windWeight: 0.20, tempWeight: 0.25, daytime: true },
-    surf:   { temp: [45, 55, 75, 90], wind: [18, 30], precipWeight: 0.45, windWeight: 0.15, tempWeight: 0.40, daytime: true },
-  };
-
-  const p = prefs[id];
-
-  // Best hour (highest per-hour mini-score)
   let bestHourISO: string | undefined;
-  let bestScore01 = -1;
-  let bestHourData = { temp: 0, wind: 0, precip: 0 };
+  let bestRaw = -1;
+  // Display values for the best hour (precipitation_probability shown to user if available)
+  let bestDisplay = { tempF: 0, windMph: 0, precipProb: 0 };
 
   for (const i of idxs) {
     const timeISO = weather.hourly.time[i];
-    const t = weather.hourly.apparent_temperature?.[i] ?? weather.hourly.temperature_2m?.[i];
-    const w = weather.hourly.windspeed_10m?.[i];
-    const pr = weather.hourly.precipitation_probability?.[i];
+    const tempF      = weather.hourly.apparent_temperature?.[i] ?? weather.hourly.temperature_2m?.[i] ?? 65;
+    const windMph    = weather.hourly.windspeed_10m?.[i] ?? 5;
+    const precipInHr = weather.hourly.precipitation?.[i] ?? 0;
+    const cloudPct   = weather.hourly.cloudcover?.[i] ?? 50;
+    // precipitation_probability is only used for display in the why string
+    const precipProb = weather.hourly.precipitation_probability?.[i] ?? Math.round(Math.min(100, precipInHr / 0.2 * 100));
 
-    const tComp = typeof t === "number" ? bandScore(t, p.temp[1], p.temp[2], p.temp[0], p.temp[3]) : 0.6;
-    const wComp = typeof w === "number" ? mphToPenalty(w, p.wind[0], p.wind[1]) : 0.7;
-    const prComp = typeof pr === "number" ? precipToPenalty(pr) : 0.7;
+    const raw = computeRawScore(id, tempF, windMph, precipInHr, cloudPct);
 
-    let s = p.tempWeight * tComp + p.windWeight * wComp + p.precipWeight * prComp;
-    
-    // Day-specific sunrise/sunset check
-    if (p.daytime && weather.daily?.sunrise && weather.daily?.sunset) {
-        const hourTime = new Date(timeISO).getTime();
-        const dateStr = timeISO.split('T')[0]; // "2026-02-20"
-        
-        // Find matching sunrise/sunset for this date
-        const sunIdx = weather.daily.sunrise.findIndex(sr => sr.startsWith(dateStr));
-        if (sunIdx !== -1) {
-            const sunriseTime = new Date(weather.daily.sunrise[sunIdx]).getTime();
-            const sunsetTime = new Date(weather.daily.sunset[sunIdx]).getTime();
-            if (hourTime < sunriseTime || hourTime > sunsetTime) {
-                s *= 0.1;
-            }
-        }
-    }
-
-    if (s > bestScore01) {
-      bestScore01 = s;
+    if (raw > bestRaw) {
+      bestRaw = raw;
       bestHourISO = timeISO;
-      bestHourData = { temp: t ?? 0, wind: w ?? 0, precip: pr ?? 0 };
+      bestDisplay = { tempF, windMph, precipProb };
     }
   }
 
-  const score = Math.round(clamp(bestScore01, 0, 1) * 100);
+  const score = bestRaw >= 0 ? rawScoreToPercentile(id, bestRaw) : 0;
 
   const why: string[] = [];
-  why.push(`Rain chance ~${Math.round(bestHourData.precip)}%`);
-  why.push(`Wind ~${Math.round(bestHourData.wind)} mph`);
-  why.push(`“Feels like” ~${Math.round(bestHourData.temp)}°F`);
+  why.push(`Rain chance ~${Math.round(bestDisplay.precipProb)}%`);
+  why.push(`Wind ~${Math.round(bestDisplay.windMph)} mph`);
+  why.push(`"Feels like" ~${Math.round(bestDisplay.tempF)}°F`);
 
-  if (p.daytime && bestHourISO && weather.daily?.sunrise && weather.daily?.sunset) {
-    const hourTime = new Date(bestHourISO).getTime();
-    const dateStr = bestHourISO.split('T')[0];
-    const sunIdx = weather.daily.sunrise.findIndex(sr => sr.startsWith(dateStr));
-    if (sunIdx !== -1) {
-        const sunriseTime = new Date(weather.daily.sunrise[sunIdx]).getTime();
-        const sunsetTime = new Date(weather.daily.sunset[sunIdx]).getTime();
-        if (hourTime < sunriseTime || hourTime > sunsetTime) {
-            why.push("Note: Best hour is at night for this daytime activity");
-        }
-    }
-  }
-
-  // Little nudge so UI doesn't look too uniform
-  const variance = (id.charCodeAt(0) % 7) / 200; // 0..0.03
-  const finalScore = Math.round(clamp(lerp(score, score + score * variance, 1), 0, 100));
-
-  return { id, name, score: finalScore, why, bestHourISO };
+  return { id, name, score, why, bestHourISO };
 }
 
 export function scoreActivities(

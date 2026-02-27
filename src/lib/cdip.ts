@@ -89,7 +89,7 @@ async function fetchCdipQCRows(transect: string): Promise<RawRow[]> {
     `&time=all&accept=csv`;
 
   try {
-    const res = await fetch(url, { next: { revalidate: 600 } });
+    const res = await fetch(url, { cache: "no-store" });
     const text = await res.text();
     if (!res.ok) {
       cdipRawCache.set(transect, { at: now, rows: [] });
@@ -177,7 +177,7 @@ export async function fetchCdipLatest(transect: string): Promise<CdipLatest> {
     `&time=all&accept=csv`;
 
   try {
-    const res = await fetch(url, { next: { revalidate: 600 } });
+    const res = await fetch(url, { cache: "no-store" });
     const text = await res.text();
 
     if (!res.ok) {

@@ -9,7 +9,8 @@
     "test": "jest",
     "lint": "eslint",
     "seed": "tsx scripts/seed-surfspots.ts",
-    "seed-strava": "tsx scripts/seed-strava.ts"
+    "seed-strava": "tsx scripts/seed-strava.ts",
+    "calibrate": "tsx scripts/calibrate-percentiles.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
