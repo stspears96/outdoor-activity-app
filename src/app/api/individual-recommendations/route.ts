@@ -138,25 +138,32 @@ export async function GET(req: Request) {
   const includeSurf = !activityType || activityType === "all" || activityType === "surf";
   const includeDb = !activityType || activityType === "all" || activityType !== "surf";
 
-  // Phase 1: Fetch candidate activities from DB and Surf Service
-  const [aqiRes, activitiesRes, surfSpots] = await Promise.allSettled([
-    fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/air-quality?lat=${lat}&lon=${lon}`, { next: { revalidate: 600 } }),
-    includeDb ? fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/activities-db?lat=${lat}&lon=${lon}&radiusKm=${radiusKm}${activityType && activityType !== "all" && activityType !== "surf" ? `&activityType=${activityType}` : ""}`) : Promise.resolve(null),
+  const base = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+
+  // Start AQI fetch immediately — it's optional and must not gate the weather fetch.
+  // A 5s abort ensures a slow AQI endpoint never delays scoring.
+  const aqiController = new AbortController();
+  setTimeout(() => aqiController.abort(), 5_000);
+  const aqiPromise: Promise<number | null> = fetch(
+    `${base}/api/air-quality?lat=${lat}&lon=${lon}`,
+    { next: { revalidate: 600 }, signal: aqiController.signal }
+  )
+    .then(r => r.ok ? r.json() : null)
+    .then((d): number | null => (d && typeof d.aqi === "number" ? d.aqi : null))
+    .catch((): null => null);
+
+  // Phase 1: Fetch candidate locations (needed before we can build the weather batch URL).
+  const [activitiesRes, surfSpots] = await Promise.allSettled([
+    includeDb ? fetch(`${base}/api/activities-db?lat=${lat}&lon=${lon}&radiusKm=${radiusKm}${activityType && activityType !== "all" && activityType !== "surf" ? `&activityType=${activityType}` : ""}`) : Promise.resolve(null),
     includeSurf ? getScoredSurfSpots(lat, lon, 60, surfBaseTimeMs) : Promise.resolve([]),
   ]);
-
-  let aqi: number | null = null;
-  if (aqiRes.status === "fulfilled" && aqiRes.value.ok) {
-    const aqiData = await aqiRes.value.json();
-    aqi = typeof aqiData.aqi === "number" ? aqiData.aqi : null;
-  }
 
   let rawActivities: any[] = [];
   if (activitiesRes.status === "fulfilled" && activitiesRes.value?.ok) {
       const data = await activitiesRes.value.json();
       rawActivities = rawActivities.concat(data.items ?? []);
   }
-  
+
   const surfList = surfSpots.status === "fulfilled" ? surfSpots.value : [];
   const candidates = [
       ...rawActivities.map(a => ({ ...a, activityId: mapDbActivitiesToActivityId(a.activities!), isSurf: false })),
@@ -186,11 +193,16 @@ export async function GET(req: Request) {
   const batchLat = locsArray.map(l => l.lat).join(",");
   const batchLon = locsArray.map(l => l.lon).join(",");
   
-  const weatherRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/weather?lat=${batchLat}&lon=${batchLon}`);
+  // Phase 2: Weather batch and AQI finish concurrently — neither gates the other.
+  const [weatherRes, aqi] = await Promise.all([
+    fetch(`${base}/api/weather?lat=${batchLat}&lon=${batchLon}`),
+    aqiPromise,
+  ]);
+
   if (!weatherRes.ok) {
       return NextResponse.json({ error: "Failed to load weather batch" }, { status: 502 });
   }
-  
+
   const weatherData = await weatherRes.json();
   const weatherArray = Array.isArray(weatherData) ? weatherData : [weatherData];
   const searchWeather = weatherArray[0];

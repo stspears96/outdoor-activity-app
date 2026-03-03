@@ -38,13 +38,18 @@ function buildUrl(lat: string, lon: string, model: string): string {
 }
 
 async function fetchModel(lat: string, lon: string, model: string): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
   try {
     const res = await fetch(buildUrl(lat, lon, model), {
       next: { revalidate: 600 },
       headers: { "User-Agent": "outdoor-activity-app/1.0" },
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     return res.ok ? res.json() : null;
   } catch {
+    clearTimeout(timer);
     return null;
   }
 }

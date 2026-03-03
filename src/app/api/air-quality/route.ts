@@ -17,11 +17,14 @@ export async function GET(req: Request) {
       timezone: "auto",
     });
 
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 6_000);
     const res = await fetch(
       `https://air-quality-api.open-meteo.com/v1/air-quality?${params.toString()}`,
       {
         next: { revalidate: 600 },
         headers: { "User-Agent": "outdoor-activity-app/1.0" },
+        signal: controller.signal,
       }
     );
 

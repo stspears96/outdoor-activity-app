@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   RecommendationsResponse,
+  BestTimeResponse,
   Place,
   PlaceType,
   TrailItem,
@@ -16,6 +17,7 @@ import MapViewDynamic from "@/components/MapViewDynamic";
 import SwellForecastModal from "@/components/SwellForecastModal";
 import LogSessionModal from "@/components/LogSessionModal";
 import { LearnedPrefsPanel } from "@/components/LearnedPrefsPanel";
+import { BestTimePanel } from "@/components/BestTimePanel";
 import type { LearningState } from "@/lib/learning/types";
 import { loadState, saveState, addObservation } from "@/lib/learning/store";
 
@@ -107,10 +109,34 @@ export default function Page() {
   // Load learning state once on mount
   useEffect(() => { setLearningState(loadState()); }, []);
 
+  // ---- Best time this week ----
+  const [bestTimeData, setBestTimeData] = useState<BestTimeResponse | null>(null);
+  const [bestTimeBusy, setBestTimeBusy] = useState(false);
+  const [bestTimeError, setBestTimeError] = useState<string | null>(null);
+  const [showBestTime, setShowBestTime] = useState(false);
+
   const canFetch = useMemo(
     () => typeof lat === "number" && typeof lon === "number",
     [lat, lon]
   );
+
+  const fetchBestTime = useCallback(async (activity: string) => {
+    if (!canFetch) return;
+    setBestTimeBusy(true);
+    setBestTimeData(null);
+    setBestTimeError(null);
+    try {
+      const res = await fetch(`/api/best-time-for?lat=${lat}&lon=${lon}&activity=${activity}`);
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const json = await res.json();
+      console.log("[best-time-for] days:", json.days?.length, json.days?.[0]);
+      setBestTimeData(json);
+    } catch (e: any) {
+      setBestTimeError(e?.message ?? "Failed to load weekly forecast.");
+    } finally {
+      setBestTimeBusy(false);
+    }
+  }, [canFetch, lat, lon]);
 
   const fetchRecs = useCallback(async () => {
     if (!canFetch) return;
@@ -137,9 +163,13 @@ export default function Page() {
     }
   }, [canFetch, lat, lon, defaultWindowHours, activityTypeFilter, selectedDate]);
 
-  // Fetch recommendations when we first get a location and when filters or date change
+  // Fetch recommendations when we first get a location and when filters or date change.
+  // Also reset the best-time panel when location or activity changes.
   useEffect(() => {
     if (canFetch) fetchRecs();
+    setShowBestTime(false);
+    setBestTimeData(null);
+    setBestTimeError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canFetch, defaultWindowHours, activityTypeFilter, selectedDate]);
 
@@ -485,6 +515,35 @@ export default function Page() {
               </button>
             ))}
           </div>
+          {activityTypeFilter !== "all" && (
+            <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => {
+                  if (!showBestTime) {
+                    setShowBestTime(true);
+                    fetchBestTime(activityTypeFilter);
+                  } else {
+                    setShowBestTime(false);
+                  }
+                }}
+                disabled={bestTimeBusy}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #a5b4fc",
+                  background: showBestTime ? "#e0e7ff" : "white",
+                  cursor: bestTimeBusy ? "wait" : "pointer",
+                  fontSize: 13,
+                  color: "#4338ca",
+                }}
+              >
+                {bestTimeBusy ? "Loading…" : showBestTime ? "Hide weekly plan" : "Best time this week →"}
+              </button>
+              {bestTimeError && (
+                <span style={{ fontSize: 12, color: "#dc2626" }}>{bestTimeError}</span>
+              )}
+            </div>
+          )}
           <div style={{ marginBottom: 8, color: "#444", fontSize: 13 }}>
             {mapSubtitle}
           </div>
@@ -627,6 +686,10 @@ export default function Page() {
       ) : busy ? (
         <div style={{ marginTop: 18, color: "#444" }}>Loading recommendations…</div>
       ) : null}
+
+      {showBestTime && bestTimeData && (
+        <BestTimePanel data={bestTimeData} onClose={() => setShowBestTime(false)} />
+      )}
 
       {forecastSpot && (
         <SwellForecastModal

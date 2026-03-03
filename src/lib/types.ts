@@ -84,6 +84,19 @@ export type RecommendationsResponse = {
   }>;
 };
 
+export type BestTimeResponse = {
+  activity: ActivityId;
+  activityName: string;
+  lat: number;
+  lon: number;
+  days: Array<{
+    dateStr: string;
+    score: number;
+    why: string[];
+    bestHourISO?: string;
+  }>;
+};
+
 export type PlaceType = "park" | "trail" | "cafe" | "dogpark" | "viewpoint";
 
 export type Place = {

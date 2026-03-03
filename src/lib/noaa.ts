@@ -40,7 +40,7 @@ export async function fetchNearestTideStation(lat: number, lon: number, radiusKm
   const url = `${MDAPI_BASE}/stations.json?type=tidepredictions&units=english`;
 
   try {
-    const res = await fetch(url, { next: { revalidate: 86400 } }); // Cache station list for 24h
+    const res = await fetch(url, { cache: "no-store" }); // in-memory stationCache handles reuse
     if (!res.ok) return null;
 
     const data = await res.json();

@@ -57,7 +57,7 @@ export async function GET(req: Request) {
     FROM activities
     WHERE latitude BETWEEN ? AND ?
       AND longitude BETWEEN ? AND ?
-      AND rating != '[0, 0]'
+      AND (rating != '[0, 0]' OR url = 'user-created')
   `;
   const params: (string | number)[] = [lat - latDelta, lat + latDelta, lon - lonDelta, lon + lonDelta];
 
@@ -126,8 +126,5 @@ export async function GET(req: Request) {
 
   const items: TrailItem[] = ranked.slice(0, 60).map(({ _reviewCount, _stars, ...item }) => item);
 
-  return NextResponse.json(
-    { items, count: items.length },
-    { headers: { "Cache-Control": "public, max-age=3600" } }
-  );
+  return NextResponse.json({ items, count: items.length });
 }
