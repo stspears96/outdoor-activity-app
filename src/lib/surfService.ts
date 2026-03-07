@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import path from "node:path";
-import { fetchCdipLatest } from "./cdip";
+import { fetchCdipAtTime } from "./cdip";
 import { scoreSurfSpot, SurfConditions, SurfSpotParams } from "./surfScoring";
 import { fetchNearestTideStation, fetchTidePredictions } from "./noaa";
 import type { SpectralSwell } from "./spectral";
@@ -75,9 +75,11 @@ export async function getScoredSurfSpots(
 
   const transects = Array.from(new Set(spots0.map((s: any) => s.cdip_transect_id).filter(Boolean)));
 
+  const targetMs = typeof baseTimeMs === "number" ? baseTimeMs : Date.now();
+
   // Parallel fetch: Wave models, Tide predictions, and Wind/Marine forecasts
   const [cdipResults, tideStation] = await Promise.all([
-    Promise.all(transects.map(t => fetchCdipLatest(t as string))),
+    Promise.all(transects.map(t => fetchCdipAtTime(t as string, targetMs))),
     fetchNearestTideStation(lat, lon, 100),
   ]);
 
@@ -122,7 +124,6 @@ export async function getScoredSurfSpots(
     return { height: Number(closest.v), state };
   };
 
-  const targetMs = typeof baseTimeMs === "number" ? baseTimeMs : Date.now();
   const currentTide = getTideAt(targetMs);
 
   const pickHourIndex = (times?: string[]) => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { ActivityId, WeatherResponse } from "@/lib/types";
 import { computeActivityScore } from "@/lib/scoring";
 import { ACTIVITY_CATALOG } from "@/lib/activities";
+import { getScoredSurfSpots } from "@/lib/surfService";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -50,6 +51,8 @@ export async function GET(req: Request) {
     bestHourISO?: string;
   }> = [];
 
+  // Build per-day baseTimeMs using sunrise from weather forecast.
+  const dayInfos: Array<{ dateStr: string; baseTimeMs: number }> = [];
   for (let d = 0; d < 7; d++) {
     const date = new Date();
     date.setDate(date.getDate() + d);
@@ -69,21 +72,76 @@ export async function GET(req: Request) {
         ? new Date(sunriseISO).getTime()
         : new Date(`${dateStr}T07:00:00`).getTime();
     }
+    dayInfos.push({ dateStr, baseTimeMs });
+  }
 
-    // 18 window hours covers a full daylight span for any latitude.
-    const result = computeActivityScore(
-      activityEntry.id,
-      activityEntry.name,
-      weather,
-      18,
-      baseTimeMs,
-      dateStr,
+  if (activityEntry.id === "surf") {
+    // Surf uses spot-specific scoring (swell, offshore wind, tide) rather than
+    // the generic weather scorer, which ignores swell and returns ~100 on any
+    // clear day.
+    //
+    // Score at multiple hour slots per day so we find the true best hour rather
+    // than always defaulting to the day's start time. Next.js fetch deduplication
+    // means identical Open-Meteo / CDIP / NOAA URLs are fetched only once across
+    // all parallel calls, and the CDIP in-memory cache handles the rest.
+    const STEP_MS = 3 * 60 * 60 * 1000;   // 3-hour resolution
+    const WINDOW_MS = 12 * 60 * 60 * 1000; // scan 12 hours from day start
+
+    const candidates: Array<{ dateStr: string; timeMs: number }> = [];
+    for (const { dateStr, baseTimeMs } of dayInfos) {
+      for (let t = baseTimeMs; t <= baseTimeMs + WINDOW_MS; t += STEP_MS) {
+        candidates.push({ dateStr, timeMs: t });
+      }
+    }
+
+    const results = await Promise.all(
+      candidates.map(({ dateStr, timeMs }) =>
+        getScoredSurfSpots(lat, lon, 60, timeMs).then(spots => ({ dateStr, timeMs, spots }))
+      )
     );
 
-    // Only include days where scoring found valid hourly data.
-    // Days beyond ~60h may have no entries when ECMWF is unavailable.
-    if (result.bestHourISO) {
-      days.push({ dateStr, ...result });
+    // For each day keep the hour slot with the highest score across all spots.
+    const bestByDay = new Map<string, { score: number; reasons: string[]; bestHourISO: string }>();
+    for (const { dateStr, spots } of results) {
+      if (spots.length === 0) continue;
+      const best = spots.reduce((a, b) => (b.score > a.score ? b : a));
+      if (!best.bestHourISO) continue;
+      const existing = bestByDay.get(dateStr);
+      if (!existing || best.score > existing.score) {
+        bestByDay.set(dateStr, { score: best.score, reasons: best.reasons, bestHourISO: best.bestHourISO });
+      }
+    }
+
+    for (const { dateStr } of dayInfos) {
+      const entry = bestByDay.get(dateStr);
+      if (entry) {
+        days.push({
+          dateStr,
+          id: activityEntry.id,
+          name: activityEntry.name,
+          score: entry.score,
+          why: entry.reasons,
+          bestHourISO: entry.bestHourISO,
+        });
+      }
+    }
+  } else {
+    for (const { dateStr, baseTimeMs } of dayInfos) {
+      // 18 window hours covers a full daylight span for any latitude.
+      const result = computeActivityScore(
+        activityEntry.id,
+        activityEntry.name,
+        weather,
+        18,
+        baseTimeMs,
+        dateStr,
+      );
+
+      // Only include days where scoring found valid hourly data.
+      // Days beyond ~60h may have no entries when ECMWF is unavailable.
+      if (result.bestHourISO) {
+        days.push({ dateStr, ...result });
+      }
     }
   }
 

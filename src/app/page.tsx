@@ -76,10 +76,7 @@ export default function Page() {
   const [trailsError, setTrailsError] = useState<string | null>(null);
   const trailsRadiusMiles = 6;
 
-  // Pre-loaded USFS trail geometries (keyed by trail id, no second fetch needed)
-  const [usfsLines, setUsfsLines] = useState<Map<string, TrailLine>>(new Map());
-
-  // ----- Selected trail lines (on-demand via /api/trail-lines-for, or pre-loaded for USFS) -----
+  // ----- Selected trail lines (on-demand via /api/trail-lines-for or /api/usfs-trail-line) -----
   const [selectedTrailLines, setSelectedTrailLines] = useState<TrailLine[]>([]);
   const [selectedTrailLabel, setSelectedTrailLabel] = useState<string | null>(null);
   const [selectedTrailBusy, setSelectedTrailBusy] = useState(false);
@@ -223,7 +220,7 @@ export default function Page() {
     }
 
     fetchSurf();
-  }, [canFetch, mode, lat, lon]);
+  }, [canFetch, mode, lat, lon, selectedDate]);
 
 
   // Fetch trail markers when in "trails" mode
@@ -237,14 +234,30 @@ export default function Page() {
       setSelectedTrailLines([]);
       setSelectedTrailLabel(null);
       setSelectedTrailError(null);
-      setUsfsLines(new Map());
 
       try {
         if (activityTypeFilter !== "all") {
-          const dbRes = await fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=${activityTypeFilter}&radiusKm=16`);
-          if (!dbRes.ok) throw new Error(`${activityTypeFilter} spots request failed: ${dbRes.status}`);
-          const json = await dbRes.json();
-          setTrailItems(json.items ?? []);
+          const fetches: Promise<Response | null>[] = [
+            fetch(`/api/activities-db?lat=${lat}&lon=${lon}&activityType=${activityTypeFilter}&radiusKm=16`),
+            // USFS trails are all hiking routes — include them for the hike filter
+            activityTypeFilter === "hike"
+              ? fetch(`/api/trails-usfs?lat=${lat}&lon=${lon}&radiusMiles=30`)
+              : Promise.resolve(null),
+          ];
+          const [dbRes, usfsRes] = await Promise.allSettled(fetches);
+
+          let items: TrailItem[] = [];
+          if (dbRes.status === "fulfilled" && dbRes.value?.ok) {
+            const json = await dbRes.value.json();
+            items = items.concat(json.items ?? []);
+          } else if (dbRes.status === "fulfilled" && dbRes.value && !dbRes.value.ok) {
+            throw new Error(`${activityTypeFilter} spots request failed: ${dbRes.value.status}`);
+          }
+          if (usfsRes.status === "fulfilled" && usfsRes.value?.ok) {
+            const json = await usfsRes.value.json();
+            items = items.concat(json.items ?? []);
+          }
+          setTrailItems(items);
         } else {
           const [osmRes, usfsRes, dbRes] = await Promise.allSettled([
             fetch(`/api/trails?lat=${lat}&lon=${lon}&radiusMiles=${trailsRadiusMiles}&limitItems=180`),
@@ -264,11 +277,6 @@ export default function Page() {
           if (usfsRes.status === "fulfilled" && usfsRes.value.ok) {
             const json = await usfsRes.value.json();
             usfsItems = json.items ?? [];
-            const lineMap = new Map<string, TrailLine>();
-            for (const ln of (json.lines ?? []) as TrailLine[]) {
-              lineMap.set(ln.id, ln);
-            }
-            setUsfsLines(lineMap);
           }
 
           let dbItems: TrailItem[] = [];
@@ -303,12 +311,19 @@ export default function Page() {
     setSelectedTrailError(null);
 
     if (refType === "usfs") {
-      const usfsId = String(id);
-      const preloaded = usfsLines.get(usfsId);
-      if (preloaded) {
-        setSelectedTrailLines([preloaded]);
-      } else {
+      // id is "usfs:TRAIL_NO" — strip the prefix to get the trail number
+      const trailNo = String(id).replace(/^usfs:/, "");
+      setSelectedTrailBusy(true);
+      try {
+        const res = await fetch(`/api/usfs-trail-line?trailNo=${encodeURIComponent(trailNo)}`);
+        if (!res.ok) throw new Error(`USFS line request failed: ${res.status}`);
+        const json = await res.json();
+        setSelectedTrailLines(json.lines ?? []);
+      } catch (e: any) {
+        setSelectedTrailError(e?.message ?? "Failed to load USFS trail line.");
         setSelectedTrailLines([]);
+      } finally {
+        setSelectedTrailBusy(false);
       }
       return;
     }
@@ -620,7 +635,7 @@ export default function Page() {
                               {s.name}
                             </button>
                           </td>
-                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>Now</td>
+                          <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>{formatBestHour(s.bestHourISO)}</td>
                           <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>{s.score ?? "—"}</td>
                           <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2", fontSize: 12, color: "#555" }}>
                             {(s.reasons ?? []).slice(0, 3).join(", ")}

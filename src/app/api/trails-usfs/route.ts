@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { TrailItem, TrailLine } from "@/lib/types";
+import type { TrailItem } from "@/lib/types";
 
 const USFS_ENDPOINT =
   "https://apps.fs.usda.gov/arcx/rest/services/EDW/EDW_TrailNFSPublish_01/MapServer/0/query";
@@ -20,13 +20,6 @@ function trailClassLabel(tc?: number): string | undefined {
   }
 }
 
-/** Compute the midpoint of an ArcGIS polyline (array of path arrays of [x,y] points). */
-function polylineMidpoint(paths: number[][][]): { lat: number; lon: number } | null {
-  const allPoints: number[][] = paths.flat();
-  if (!allPoints.length) return null;
-  const mid = allPoints[Math.floor(allPoints.length / 2)];
-  return { lat: mid[1], lon: mid[0] };
-}
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -49,8 +42,11 @@ export async function GET(req: Request) {
     distance: String(radiusM),
     units: "esriSRUnit_Meter",
     outFields: "TRAIL_NAME,TRAIL_NO,TRAIL_CLASS,GIS_MILES,TRAIL_SURFACE",
-    where: "TRAIL_NAME IS NOT NULL",
+    where: "TRAIL_NAME IS NOT NULL AND GIS_MILES > 3 AND TRAIL_SURFACE IN ('NAT - NATIVE MATERIAL', 'NATIVE MATERIAL') AND TRAIL_NAME NOT LIKE '%4WD%' AND TRAIL_NAME NOT LIKE '%OHV%' AND TRAIL_NAME NOT LIKE '%ATV%' AND TRAIL_NAME NOT LIKE '%JEEP%'",
     returnGeometry: "true",
+    // Coarse simplification (~5km tolerance) — just enough to get a midpoint for the marker;
+    // full geometry is fetched on demand via /api/usfs-trail-line.
+    maxAllowableOffset: "0.05",
     outSR: "4326",
     f: "json",
   });
@@ -82,8 +78,9 @@ export async function GET(req: Request) {
 
   const features: any[] = data?.features ?? [];
 
-  const items: TrailItem[] = [];
-  const lines: TrailLine[] = [];
+  // ArcGIS returns one feature per trail segment; deduplicate by trail ID,
+  // keeping the segment with the most miles as the representative marker.
+  const byId = new Map<string, TrailItem & { miles: number }>();
 
   for (const f of features) {
     const attrs = f.attributes ?? {};
@@ -93,22 +90,25 @@ export async function GET(req: Request) {
     const trailNo: string | undefined = attrs.TRAIL_NO ?? undefined;
     const trailClass: number | undefined =
       typeof attrs.TRAIL_CLASS === "number" ? attrs.TRAIL_CLASS : undefined;
-    const gisMiles: number | undefined =
-      typeof attrs.GIS_MILES === "number" ? attrs.GIS_MILES : undefined;
+    const gisMiles: number =
+      typeof attrs.GIS_MILES === "number" ? attrs.GIS_MILES : 0;
     const surface: string | undefined = attrs.TRAIL_SURFACE ?? undefined;
 
     const paths: number[][][] = f.geometry?.paths ?? [];
-    const midpoint = polylineMidpoint(paths);
-    if (!midpoint) continue;
+    const allPoints = paths.flat();
+    if (!allPoints.length) continue;
+    const mid = allPoints[Math.floor(allPoints.length / 2)];
 
     const id = `usfs:${trailNo ?? name.replace(/\s+/g, "_")}`;
+    const existing = byId.get(id);
+    if (existing && existing.miles >= gisMiles) continue;
 
-    items.push({
+    byId.set(id, {
       id,
       itemType: "hiking_route",
       name,
-      lat: midpoint.lat,
-      lon: midpoint.lon,
+      lat: mid[1],
+      lon: mid[0],
       surface: surface ?? undefined,
       source: "usfs",
       miles: gisMiles,
@@ -116,18 +116,8 @@ export async function GET(req: Request) {
       difficulty: trailClassLabel(trailClass),
       ref: trailNo,
     });
-
-    // Build TrailLine geometry for immediate display (no second fetch needed)
-    if (paths.length > 0) {
-      const latlngs: Array<[number, number]> = paths
-        .flat()
-        .map(([x, y]: number[]) => [y, x] as [number, number]);
-
-      if (latlngs.length > 0) {
-        lines.push({ id, name, latlngs });
-      }
-    }
   }
 
-  return NextResponse.json({ items, lines, count: items.length, radiusMiles });
+  const items: TrailItem[] = [...byId.values()];
+  return NextResponse.json({ items, count: items.length, radiusMiles });
 }
