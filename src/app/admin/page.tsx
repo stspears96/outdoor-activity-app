@@ -2,6 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import AdminPickerMapDynamic from "@/components/AdminPickerMapDynamic";
+import type { LearningState, Observation } from "@/lib/learning/types";
+import type { Conditions } from "@/lib/types";
+import { loadState, saveState, defaultState, addObservation } from "@/lib/learning/store";
 
 type UserActivity = {
   id: number;
@@ -11,6 +14,50 @@ type UserActivity = {
   activities: string;
   gpx_track_id: number;
 };
+
+const ACTIVITY_LABELS: Record<string, string> = {
+  run: "Run", hike: "Hike", bike: "Bike", mtb: "MTB", picnic: "Picnic", surf: "Surf",
+};
+
+function ratingColor(r: number): string {
+  if (r >= 78) return "#059669";
+  if (r >= 60) return "#10b981";
+  if (r >= 42) return "#f59e0b";
+  return "#ef4444";
+}
+
+function formatTimestamp(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+}
+
+function condSummary(c: Conditions): string {
+  const parts: string[] = [`${Math.round(c.tempF)}°F`];
+  if (c.windMph > 2) parts.push(`${Math.round(c.windMph)} mph`);
+  if (c.swellHeightM != null) {
+    parts.push(`${(c.swellHeightM * 3.281).toFixed(1)}ft`);
+    if (c.swellPeakPeriodS != null) parts.push(`${Math.round(c.swellPeakPeriodS)}s`);
+  }
+  if (c.precipProb > 20) parts.push(`${Math.round(c.precipProb)}% rain`);
+  return parts.join(" · ");
+}
+
+function rebuildState(observations: Observation[]): LearningState {
+  let state = defaultState();
+  for (const obs of observations) {
+    state = addObservation(
+      state,
+      obs.activityId,
+      obs.conditions,
+      obs.userRating,
+      obs.locationName ? { name: obs.locationName, lat: obs.locationLat!, lon: obs.locationLon! } : undefined,
+    );
+  }
+  // addObservation creates new Observation objects with fresh ids/timestamps.
+  // Restore the originals so we don't clobber stored dates and ids.
+  return { ...state, observations };
+}
 
 const ACTIVITY_OPTIONS = [
   { value: "hike", label: "Hike" },
@@ -29,6 +76,7 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [activities, setActivities] = useState<UserActivity[]>([]);
+  const [learningState, setLearningState] = useState<LearningState | null>(null);
   const gpxRef = useRef<HTMLInputElement>(null);
 
   const fetchActivities = useCallback(async () => {
@@ -43,7 +91,24 @@ export default function AdminPage() {
 
   useEffect(() => {
     fetchActivities();
+    setLearningState(loadState());
   }, [fetchActivities]);
+
+  function handleDeleteSession(id: string) {
+    if (!learningState) return;
+    const remaining = learningState.observations.filter(o => o.id !== id);
+    const newState = rebuildState(remaining);
+    saveState(newState);
+    setLearningState(newState);
+  }
+
+  function handleClearSessions() {
+    if (!learningState || learningState.observations.length === 0) return;
+    if (!confirm(`Delete all ${learningState.observations.length} logged sessions? This cannot be undone.`)) return;
+    const newState = defaultState();
+    saveState(newState);
+    setLearningState(newState);
+  }
 
   const handlePick = useCallback((pickedLat: number, pickedLon: number) => {
     setLat(pickedLat);
@@ -204,6 +269,91 @@ export default function AdminPage() {
             </button>
           </form>
         </div>
+      </div>
+
+      {/* Logged sessions */}
+      <div style={{ marginTop: 48 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 16, marginBottom: 12 }}>
+          <h2 style={{ fontSize: 18, margin: 0 }}>
+            Logged sessions
+            {learningState && learningState.observations.length > 0 && (
+              <span style={{ fontWeight: 400, fontSize: 14, color: "#888", marginLeft: 8 }}>
+                ({learningState.observations.length})
+              </span>
+            )}
+          </h2>
+          {learningState && learningState.observations.length > 0 && (
+            <button
+              onClick={handleClearSessions}
+              style={{ fontSize: 13, color: "#dc2626", background: "none", border: "1px solid #fca5a5", borderRadius: 5, padding: "3px 10px", cursor: "pointer" }}
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+        {!learningState || learningState.observations.length === 0 ? (
+          <p style={{ color: "#888", fontSize: 14 }}>No sessions logged yet.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f5f5f5" }}>
+                  <th style={{ textAlign: "left", padding: "8px 12px", border: "1px solid #ddd" }}>Date</th>
+                  <th style={{ textAlign: "left", padding: "8px 12px", border: "1px solid #ddd" }}>Activity</th>
+                  <th style={{ textAlign: "left", padding: "8px 12px", border: "1px solid #ddd" }}>Location</th>
+                  <th style={{ textAlign: "center", padding: "8px 12px", border: "1px solid #ddd" }}>Rating</th>
+                  <th style={{ textAlign: "left", padding: "8px 12px", border: "1px solid #ddd" }}>Conditions</th>
+                  <th style={{ padding: "8px 12px", border: "1px solid #ddd" }} />
+                </tr>
+              </thead>
+              <tbody>
+                {[...learningState.observations].sort((a, b) => {
+                  const ta = a.conditions.timeISO ? Date.parse(a.conditions.timeISO) : a.timestamp;
+                  const tb = b.conditions.timeISO ? Date.parse(b.conditions.timeISO) : b.timestamp;
+                  return tb - ta;
+                }).map(obs => (
+                  <tr key={obs.id}>
+                    <td style={{ padding: "8px 12px", border: "1px solid #ddd", whiteSpace: "nowrap", color: "#555" }}>
+                      {obs.conditions.timeISO
+                        ? formatTimestamp(Date.parse(obs.conditions.timeISO))
+                        : formatTimestamp(obs.timestamp)}
+                    </td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #ddd", fontWeight: 600 }}>
+                      {ACTIVITY_LABELS[obs.activityId] ?? obs.activityId}
+                    </td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #ddd", color: "#555", fontSize: 12 }}>
+                      {obs.locationName ?? (
+                        obs.locationLat != null
+                          ? `${obs.locationLat.toFixed(3)}, ${obs.locationLon!.toFixed(3)}`
+                          : "—"
+                      )}
+                    </td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #ddd", textAlign: "center" }}>
+                      <span style={{
+                        background: ratingColor(obs.userRating), color: "#fff",
+                        borderRadius: 5, padding: "2px 8px", fontWeight: 700, fontSize: 12,
+                      }}>
+                        {obs.userRating}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #ddd", color: "#555", fontSize: 12 }}>
+                      {condSummary(obs.conditions)}
+                    </td>
+                    <td style={{ padding: "8px 12px", border: "1px solid #ddd", textAlign: "center" }}>
+                      <button
+                        onClick={() => handleDeleteSession(obs.id)}
+                        style={{ fontSize: 12, color: "#dc2626", background: "none", border: "none", cursor: "pointer", padding: "2px 6px" }}
+                        title="Delete this session"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Saved activities list */}

@@ -12,9 +12,13 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from "recharts";
-import type { WeatherResponse } from "@/lib/types";
+import type { WeatherResponse, Conditions } from "@/lib/types";
 import { scoreSurfSpot, SurfConditions, qualityToColor } from "@/lib/surfScoring";
 import type { SpectralSwell } from "@/lib/spectral";
+import type { LearningState } from "@/lib/learning/types";
+import { predictBeta } from "@/lib/learning/betaModel";
+import { predictLinear } from "@/lib/learning/linearModel";
+import { predictGp } from "@/lib/learning/gpModel";
 
 type CdipPoint = {
   time: string;
@@ -40,10 +44,16 @@ type ChartRow = {
   ta: number | null; // average period (s)
   dp: number | null; // peak direction (deg)
   windDir: number | null; // wind direction (deg)
-  windSpeed: number | null; // wind speed (kts)
+  windSpeed: number | null; // wind speed (mph)
+  tempF: number | null;
+  cloudPct: number | null;
+  precipProb: number | null;
   tideHeight: number | null;
   score: number | null;
   color: string | null;
+  betaScore: number | null;
+  linearScore: number | null;
+  gpScore: number | null;
 };
 
 function formatTime(epoch: number): string {
@@ -54,6 +64,21 @@ function formatTime(epoch: number): string {
     minute: "2-digit",
   });
   return `${day} ${hour}`;
+}
+
+function circularMidDeg(a: number, b: number): number {
+  const s = (Math.sin((a * Math.PI) / 180) + Math.sin((b * Math.PI) / 180)) / 2;
+  const c = (Math.cos((a * Math.PI) / 180) + Math.cos((b * Math.PI) / 180)) / 2;
+  return ((Math.atan2(s, c) * 180) / Math.PI + 360) % 360;
+}
+
+function angDistDeg(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+function scoreToColor(s: number): string {
+  return qualityToColor(s >= 78 ? "excellent" : s >= 60 ? "good" : s >= 42 ? "fair" : "poor");
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -90,9 +115,10 @@ export default function SwellForecastModal(props: {
   swell_min_deg?: number | null;
   swell_max_deg?: number | null;
   tide_preference?: string | null;
+  learningState?: LearningState | null;
   onClose: () => void;
 }) {
-  const { name, transectId, lat, lon, onClose, wind_offshore_min_deg, wind_offshore_max_deg, swell_min_deg, swell_max_deg, tide_preference } = props;
+  const { name, transectId, lat, lon, onClose, wind_offshore_min_deg, wind_offshore_max_deg, swell_min_deg, swell_max_deg, tide_preference, learningState } = props;
   const [data, setData] = useState<ChartRow[] | null>(null);
   const [latestSwellComponents, setLatestSwellComponents] = useState<SpectralSwell[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -164,9 +190,15 @@ export default function SwellForecastModal(props: {
                 dp: null,
                 windDir: null,
                 windSpeed: null,
+                tempF: null,
+                cloudPct: null,
+                precipProb: null,
                 tideHeight: null,
                 score: null,
                 color: null,
+                betaScore: null,
+                linearScore: null,
+                gpScore: null,
             });
         }
 
@@ -211,13 +243,15 @@ export default function SwellForecastModal(props: {
             }
             if (weather && weather.hourly) {
                 const wTime = weather.hourly.time;
-                const wDir = weather.hourly.winddirection_10m;
-                const wSpeed = weather.hourly.windspeed_10m;
                 if (wTime) {
                     const idx = wTime.findIndex(s => Date.parse(s) === row.time);
                     if (idx !== -1) {
-                        if (wDir) row.windDir = wDir[idx] ?? null;
-                        if (wSpeed) row.windSpeed = wSpeed[idx] ?? null;
+                        if (weather.hourly.winddirection_10m) row.windDir = weather.hourly.winddirection_10m[idx] ?? null;
+                        if (weather.hourly.windspeed_10m) row.windSpeed = weather.hourly.windspeed_10m[idx] ?? null;
+                        const tempArr = weather.hourly.apparent_temperature ?? weather.hourly.temperature_2m;
+                        if (tempArr) row.tempF = tempArr[idx] ?? null;
+                        if (weather.hourly.cloudcover) row.cloudPct = weather.hourly.cloudcover[idx] ?? null;
+                        if (weather.hourly.precipitation_probability) row.precipProb = weather.hourly.precipitation_probability[idx] ?? null;
                     }
                 }
             }
@@ -246,6 +280,39 @@ export default function SwellForecastModal(props: {
                 }, cond);
                 row.score = score;
                 row.color = qualityToColor(quality);
+
+                if (learningState) {
+                    const offCenter = circularMidDeg(wind_offshore_min_deg ?? 0, wind_offshore_max_deg ?? 180);
+                    const learnCond: Conditions = {
+                        tempF: row.tempF ?? 65,
+                        windMph: row.windSpeed ?? 0,
+                        windDirDeg: row.windDir ?? 0,
+                        precipProb: row.precipProb ?? 0,
+                        cloudCover: row.cloudPct ?? 50,
+                        humidity: 80,
+                        recentRainIn: 0,
+                        aqi: null,
+                        cape: 0,
+                        precipType: "none",
+                        precipIntensityMmh: 0,
+                        visibilityKm: 10,
+                        swellHeightM: (row.forecastHs ?? row.nowcastHs ?? 0) / 3.281,
+                        swellPeakPeriodS: row.tp ?? undefined,
+                        swellAvgPeriodS: row.ta ?? undefined,
+                        swellPeriodDiffS: row.tp != null && row.ta != null ? row.tp - row.ta : undefined,
+                        windOffshoreAngleDeg: angDistDeg(row.windDir ?? 0, offCenter),
+                        tideHeightFt: row.tideHeight ?? undefined,
+                    };
+                    row.betaScore = Math.round(predictBeta(learningState.betaParams, "surf", learnCond) * 100);
+                    const lp = learningState.linearParams?.surf;
+                    if (lp && lp.updateCount > 0) {
+                        row.linearScore = Math.round(Math.max(0, Math.min(1, predictLinear(lp, learnCond))) * 100);
+                    }
+                    const surfObsCount = learningState.gpConfig?.observations?.filter(o => o.activityId === "surf").length ?? 0;
+                    if (surfObsCount > 0) {
+                        row.gpScore = Math.round(Math.max(0, Math.min(1, predictGp(learningState.gpConfig, "surf", learnCond))) * 100);
+                    }
+                }
             }
         }
         setData(rows);
@@ -485,22 +552,28 @@ export default function SwellForecastModal(props: {
             )}
 
             <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 4, textAlign: 'center' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginBottom: 6, textAlign: 'center' }}>
                     Surf Quality Forecast
                 </div>
-                <div style={{ display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden', marginLeft: 48, marginRight: 16 }}>
-                    {data.map((r, i) => (
-                        <div 
-                            key={i} 
-                            title={`${r.label}: Score ${r.score ?? '—'}`}
-                            style={{ 
-                                flex: 1, 
-                                background: r.color ?? '#eee',
-                                borderRight: '1px solid rgba(255,255,255,0.1)'
-                            }} 
-                        />
-                    ))}
-                </div>
+                {([
+                    { label: "Rule-based", getColor: (r: ChartRow) => r.color ?? '#eee', getTitle: (r: ChartRow) => `${r.label}: ${r.score ?? '—'}/100` },
+                    ...(data.some(r => r.betaScore != null) ? [{ label: "Bayesian", getColor: (r: ChartRow) => r.betaScore != null ? scoreToColor(r.betaScore) : '#eee', getTitle: (r: ChartRow) => `${r.label}: ${r.betaScore ?? '—'}/100` }] : []),
+                    ...(data.some(r => r.linearScore != null) ? [{ label: "Linear", getColor: (r: ChartRow) => r.linearScore != null ? scoreToColor(r.linearScore) : '#eee', getTitle: (r: ChartRow) => `${r.label}: ${r.linearScore ?? '—'}/100` }] : []),
+                    ...(data.some(r => r.gpScore != null) ? [{ label: "GP", getColor: (r: ChartRow) => r.gpScore != null ? scoreToColor(r.gpScore) : '#eee', getTitle: (r: ChartRow) => `${r.label}: ${r.gpScore ?? '—'}/100` }] : []),
+                ] as { label: string; getColor: (r: ChartRow) => string; getTitle: (r: ChartRow) => string }[]).map(model => (
+                    <div key={model.label} style={{ display: 'flex', alignItems: 'center', marginBottom: 3 }}>
+                        <span style={{ width: 64, fontSize: 10, color: '#888', textAlign: 'right', paddingRight: 6, flexShrink: 0 }}>{model.label}</span>
+                        <div style={{ flex: 1, display: 'flex', height: 12, borderRadius: 3, overflow: 'hidden', marginRight: 16 }}>
+                            {data.map((r, i) => (
+                                <div
+                                    key={i}
+                                    title={model.getTitle(r)}
+                                    style={{ flex: 1, background: model.getColor(r), borderRight: '1px solid rgba(255,255,255,0.1)' }}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                ))}
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', marginTop: 6 }}>
                     {QUALITY_LEVELS.map(lvl => (
                         <div key={lvl.label} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>

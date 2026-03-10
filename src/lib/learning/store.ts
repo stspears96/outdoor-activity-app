@@ -2,8 +2,9 @@ import type { ActivityId, Conditions } from "@/lib/types";
 import type { LearningState, Observation, PendingSession } from "./types";
 import { initBetaParams, updateBeta } from "./betaModel";
 import { initAllLinearParams, updateLinear } from "./linearModel";
-import { initGpConfig, addGpObservation } from "./gpModel";
+import { initGpConfig, addGpObservation, DEFAULT_LENGTH_SCALES } from "./gpModel";
 import { predictBeta } from "./betaModel";
+import { extractFeatures } from "./buckets";
 
 const STORAGE_KEY = "outdoor-app-learning";
 const FEEDBACK_DELAY_MS = 2 * 60 * 60 * 1000; // 2 hours
@@ -38,6 +39,23 @@ export function loadState(): LearningState {
     const parsed = JSON.parse(raw) as LearningState;
     // Version migration placeholder
     if (parsed.version !== 1) return defaultState();
+
+    // Migrate GP feature vectors if they predate surf features (old vectors are 20-dim).
+    // The raw conditions (with swell/tide) are stored in state.observations — re-extract
+    // features from them so existing surf observations get their swell data encoded.
+    const gpObs = parsed.gpConfig?.observations ?? [];
+    const rawObs = parsed.observations ?? [];
+    if (gpObs.some(o => o.features.length < 25) && gpObs.length === rawObs.length) {
+      parsed.gpConfig = {
+        ...parsed.gpConfig,
+        lengthScales: [...DEFAULT_LENGTH_SCALES],
+        observations: gpObs.map((o, i) => ({
+          ...o,
+          features: extractFeatures(rawObs[i].conditions),
+        })),
+      };
+    }
+
     return parsed;
   } catch {
     return defaultState();

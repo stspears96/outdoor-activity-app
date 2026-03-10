@@ -2,7 +2,7 @@ import type { ActivityId, Conditions } from "@/lib/types";
 import type { LinearParams } from "./types";
 import { extractFeatures } from "./buckets";
 
-const NUM_FEATURES = 20;
+const NUM_FEATURES = 25;
 
 export function initLinearParams(): LinearParams {
   // Start with small uniform weights; bias = 0.5 for neutral prior
@@ -23,6 +23,10 @@ export function updateLinear(
   rating01: number
 ): void {
   const features = extractFeatures(conditions);
+  // Extend weights array if stored model predates surf features (backwards compat)
+  while (params.weights.length < features.length) {
+    params.weights.push(0);
+  }
   const lr = 0.05 / (1 + params.updateCount / 20);
 
   const pred = Math.max(0, Math.min(1, dotProduct(params.weights, features)));

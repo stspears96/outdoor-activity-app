@@ -207,36 +207,62 @@ type WeatherSlot = {
 };
 
 async function fetchWeather(lat: number, lon: number, sessionTimeMs: number): Promise<WeatherSlot | null> {
+  // Use HRRR for recent sessions (best coastal resolution); fall back to ECMWF if HRRR
+  // returns no data (e.g. session > ~48h ago or outside HRRR domain).
+  const fields = "temperature_2m,wind_speed_10m,wind_direction_10m,precipitation_probability,cloud_cover,relative_humidity_2m,precipitation";
+  // Request an explicit date window centred on the session so we always get
+  // the right hour regardless of HRRR's rolling forecast window length.
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const startDate = fmt(new Date(sessionTimeMs - 2 * 24 * 3600 * 1000));
+  const endDate   = fmt(new Date(sessionTimeMs + 1 * 24 * 3600 * 1000));
+  const base = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=${fields}&wind_speed_unit=ms&start_date=${startDate}&end_date=${endDate}&timezone=UTC&cell_selection=land`;
+
+  async function fetchModel(model: string): Promise<any> {
+    const url = `${base}&models=${model}`;
+    console.log("[fetchWeather] fetching:", url);
+    const res = await fetch(url, { cache: "no-store" });
+    return res.json();
+  }
+
   try {
-    const res = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-      `&hourly=temperature_2m,wind_speed_10m,wind_direction_10m,precipitation_probability,cloud_cover,relative_humidity_2m,precipitation` +
-      `&wind_speed_unit=ms&past_days=2&timezone=UTC`
-    );
-    const json = await res.json();
+    let json = await fetchModel("ncep_hrrr_conus");
+    let modelUsed = "ncep_hrrr_conus";
+    // If HRRR returned no hourly data (outside HRRR domain), fall back to ECMWF
+    if (!json.hourly?.time?.length) {
+      json = await fetchModel("ecmwf_ifs");
+      modelUsed = "ecmwf_ifs";
+    }
     const hourly = json.hourly ?? {};
     const times: string[] = hourly.time ?? [];
 
     let bestIdx = -1;
     let bestDelta = Infinity;
     for (let i = 0; i < times.length; i++) {
-      const t = Date.parse(times[i]);
+      // Open-Meteo returns UTC times without 'Z'; Date.parse without 'Z' treats
+      // them as local time on non-UTC servers — append 'Z' to force UTC parsing.
+      const t = Date.parse(times[i] + "Z");
       if (!Number.isFinite(t)) continue;
       const delta = Math.abs(t - sessionTimeMs);
       if (delta < bestDelta) { bestDelta = delta; bestIdx = i; }
     }
     if (bestIdx < 0) return null;
 
+    const windSpeedMs = hourly.wind_speed_10m?.[bestIdx] ?? 0;
+    const matchDeltaH = bestDelta / 3600000;
+    if (matchDeltaH > 2) console.warn(`[fetchWeather] poor time match: delta=${matchDeltaH.toFixed(1)}h, matched ${times[bestIdx]} for session ${new Date(sessionTimeMs).toISOString()}`);
+    console.log(`[fetchWeather] model=${modelUsed} lat=${lat} lon=${lon} sessionTime=${new Date(sessionTimeMs).toISOString()} matchedTime=${times[bestIdx]} windSpeedMs=${windSpeedMs} windMph=${(windSpeedMs * 2.237).toFixed(1)}`);
+
     return {
       tempC: hourly.temperature_2m?.[bestIdx] ?? 15,
-      windSpeedMs: hourly.wind_speed_10m?.[bestIdx] ?? 0,
+      windSpeedMs,
       windDirDeg: hourly.wind_direction_10m?.[bestIdx] ?? 0,
       precipProbPct: hourly.precipitation_probability?.[bestIdx] ?? 0,
       cloudCover: hourly.cloud_cover?.[bestIdx] ?? 50,
       humidity: hourly.relative_humidity_2m?.[bestIdx] ?? 70,
       precipMmh: hourly.precipitation?.[bestIdx] ?? 0,
     };
-  } catch {
+  } catch (e) {
+    console.error("[fetchWeather] error:", e);
     return null;
   }
 }
@@ -255,7 +281,8 @@ async function fetchMarine(lat: number, lon: number, sessionTimeMs: number): Pro
     const res = await fetch(
       `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}` +
       `&hourly=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period` +
-      `&cell_selection=sea&past_days=2&timezone=UTC`
+      `&cell_selection=sea&past_days=2&timezone=UTC`,
+      { cache: "no-store" }
     );
     const json = await res.json();
     const hourly = json.hourly ?? {};
@@ -264,7 +291,7 @@ async function fetchMarine(lat: number, lon: number, sessionTimeMs: number): Pro
     let bestIdx = -1;
     let bestDelta = Infinity;
     for (let i = 0; i < times.length; i++) {
-      const t = Date.parse(times[i]);
+      const t = Date.parse(times[i] + "Z"); // force UTC parsing
       if (!Number.isFinite(t)) continue;
       const delta = Math.abs(t - sessionTimeMs);
       if (delta < bestDelta) { bestDelta = delta; bestIdx = i; }

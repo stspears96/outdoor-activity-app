@@ -18,6 +18,7 @@ import SwellForecastModal from "@/components/SwellForecastModal";
 import LogSessionModal from "@/components/LogSessionModal";
 import { LearnedPrefsPanel } from "@/components/LearnedPrefsPanel";
 import { BestTimePanel } from "@/components/BestTimePanel";
+import { CurrentConditionsPanel } from "@/components/CurrentConditionsPanel";
 import type { LearningState } from "@/lib/learning/types";
 import { loadState, saveState, addObservation } from "@/lib/learning/store";
 
@@ -583,6 +584,13 @@ export default function Page() {
         </section>
       ) : null}
 
+      {data && learningState && (
+        <CurrentConditionsPanel
+          activities={data.activities}
+          learningState={learningState}
+        />
+      )}
+
       {data ? (
         <>
           <div style={{ marginTop: 18, color: "#444", fontSize: 13 }}>
@@ -717,6 +725,7 @@ export default function Page() {
           swell_min_deg={forecastSpot.swell_min_deg}
           swell_max_deg={forecastSpot.swell_max_deg}
           tide_preference={forecastSpot.tide_preference}
+          learningState={learningState}
           onClose={() => setForecastSpot(null)}
         />
       )}

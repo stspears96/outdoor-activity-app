@@ -26,6 +26,12 @@ export const DEFAULT_LENGTH_SCALES: number[] = [
   0.35, // 17: tempNorm×humidityNorm
   0.35, // 18: rainProbNorm×cloudNorm
   0.35, // 19: precipIntensityNorm×rainProbNorm
+  // Surf-specific (indices 20–24)
+  0.25, // 20: swellHeightNorm
+  0.25, // 21: swellPeakPeriodNorm
+  0.25, // 22: swellPeriodDiffNorm
+  0.25, // 23: windOffshoreNorm
+  0.3,  // 24: tideHeightNorm
 ];
 
 export function initGpConfig(): GpConfig {
@@ -58,14 +64,18 @@ export function predictGp(
   if (actObs.length === 0) return 0.5;
 
   const query = extractFeatures(conditions);
-  const scales = config.lengthScales;
+  // Extend stored length-scales array if it predates surf features (backwards compat)
+  const scales = query.length > config.lengthScales.length
+    ? [...config.lengthScales, ...DEFAULT_LENGTH_SCALES.slice(config.lengthScales.length)]
+    : config.lengthScales;
 
   // Nadaraya–Watson kernel regression
+  // o.features[i] may be undefined for old 20-dim stored observations — treat as 0
   const kernelWeights = actObs.map(o => {
     let sumSq = 0;
     for (let i = 0; i < query.length; i++) {
       if (scales[i] >= 1e8) continue; // skip bias
-      const diff = (query[i] - o.features[i]) / scales[i];
+      const diff = (query[i] - (o.features[i] ?? 0)) / scales[i];
       sumSq += diff * diff;
     }
     return Math.exp(-0.5 * sumSq);

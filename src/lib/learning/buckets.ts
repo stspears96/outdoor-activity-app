@@ -223,7 +223,9 @@ export function getBuckets(cond: Conditions): BucketMap {
   return result;
 }
 
-// ─── Feature vector (20 values) for linear / GP models ───────────────────────
+// ─── Feature vector (25 values) for linear / GP models ───────────────────────
+// Indices 0–19: weather features (all activities)
+// Indices 20–24: surf-specific features (0 for non-surf activities)
 
 function clampVal(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
@@ -243,6 +245,15 @@ export function extractFeatures(cond: Conditions): number[] {
   const lightningNorm = clampVal(cond.cape / 1500, 0, 2);
   const precipIntensityNorm = clampVal(cond.precipIntensityMmh / 10, 0, 2);
   const visibilityNorm = 1 - Math.min(cond.visibilityKm / 10, 1); // inverted: 1=poor
+
+  // Surf features — default to 0 when absent (non-surf activities)
+  const swellHeightNorm = clampVal((cond.swellHeightM ?? 0) / 3, 0, 2);
+  const swellPeakPeriodNorm = clampVal((cond.swellPeakPeriodS ?? 0) / 20, 0, 1);
+  const swellPeriodDiffNorm = clampVal((cond.swellPeriodDiffS ?? 0) / 10, 0, 1);
+  // windOffshoreNorm: 0 = dead offshore, 1 = onshore
+  const windOffshoreNorm = cond.windOffshoreAngleDeg != null
+    ? clampVal(cond.windOffshoreAngleDeg / 180, 0, 1) : 0;
+  const tideHeightNorm = clampVal((cond.tideHeightFt ?? 0) / 6, 0, 1);
 
   return [
     1,                                        // 0: bias
@@ -265,6 +276,11 @@ export function extractFeatures(cond: Conditions): number[] {
     tempNorm * humidityNorm,                  // 17
     rainProbNorm * cloudNorm,                 // 18
     precipIntensityNorm * rainProbNorm,       // 19
+    swellHeightNorm,                          // 20: swell height (surf)
+    swellPeakPeriodNorm,                      // 21: peak period (surf)
+    swellPeriodDiffNorm,                      // 22: period spread / Tp-Ta (surf)
+    windOffshoreNorm,                         // 23: wind vs offshore (surf)
+    tideHeightNorm,                           // 24: tide height (surf)
   ];
 }
 

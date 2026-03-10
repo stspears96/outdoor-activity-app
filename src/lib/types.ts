@@ -14,6 +14,10 @@ export type ActivityScore = {
   bestHourISO?: string; // e.g. 2026-02-07T18:00
   lat?: number;
   lon?: number;
+  bestHourConditions?: Conditions | null;
+  isSurf?: boolean;
+  wind_offshore_min_deg?: number | null;
+  wind_offshore_max_deg?: number | null;
 };
 
 export type WeatherHourly = {
