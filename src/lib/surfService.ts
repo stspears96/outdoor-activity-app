@@ -89,14 +89,31 @@ export async function getScoredSurfSpots(
   // Batch Wind/Marine fetch from Open-Meteo
   const lats = spots0.map(s => s.lat).join(",");
   const lons = spots0.map(s => s.lon).join(",");
-  
-  const [windRes, marineRes] = await Promise.all([
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=UTC`).then(r => r.json()),
+
+  // Pick wind model by forecast horizon — mirrors the weather route's priority:
+  // HRRR (3 km, best near-term) → NAM (12 km) → ECMWF (global, 7-day)
+  // Always fetch ECMWF as fallback because HRRR/NAM don't cover ocean grid cells.
+  const offsetMs = targetMs - Date.now();
+  const windModel =
+    offsetMs < 24 * 3600 * 1000 ? "ncep_hrrr_conus" :
+    offsetMs < 60 * 3600 * 1000 ? "ncep_nam_conus" :
+    "ecmwf_ifs";
+
+  const windUrl = (model: string) =>
+    `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timezone=UTC&models=${model}`;
+
+  const fetchWind = (model: string) => fetch(windUrl(model)).then(r => r.json()).catch(() => null);
+
+  const [windRes, windFallbackRes, marineRes] = await Promise.all([
+    fetchWind(windModel),
+    windModel !== "ecmwf_ifs" ? fetchWind("ecmwf_ifs") : Promise.resolve(null),
     fetch(`https://marine-api.open-meteo.com/v1/marine?latitude=${lats}&longitude=${lons}&hourly=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period&cell_selection=sea&timezone=UTC`).then(r => r.json()),
   ]);
 
-  const windArray = Array.isArray(windRes) ? windRes : [windRes];
-  const marineArray = Array.isArray(marineRes) ? marineRes : [marineRes];
+  const toArr = (r: any) => Array.isArray(r) ? r : (r ? [r] : []);
+  const windArray = toArr(windRes);
+  const windFallbackArray = toArr(windFallbackRes);
+  const marineArray = toArr(marineRes);
 
   let tideData: any[] = [];
   if (tideStation) {
@@ -129,14 +146,20 @@ export async function getScoredSurfSpots(
   const pickHourIndex = (times?: string[]) => {
     if (!times || times.length === 0) return -1;
     for (let i = 0; i < times.length; i++) {
-      const t = new Date(times[i]).getTime();
+      // Open-Meteo returns UTC times without a "Z" suffix. Append it so
+      // Date.parse treats them as UTC rather than local time.
+      const str = times[i].endsWith("Z") ? times[i] : times[i] + "Z";
+      const t = new Date(str).getTime();
       if (t >= targetMs) return i;
     }
     return -1;
   };
 
   return spots0.map((s, i) => {
-    const w = windArray[i]?.hourly;
+    // Use preferred wind model if it returned hourly data for this spot; fall back to ECMWF.
+    const wPref = windArray[i]?.hourly;
+    const wFall = windFallbackArray[i]?.hourly;
+    const w = wPref?.time?.length ? wPref : (wFall?.time?.length ? wFall : wPref);
     const m = marineArray[i]?.hourly;
     const cdip = s.cdip_transect_id ? cdipByTransect.get(s.cdip_transect_id) : null;
     const windIdx = pickHourIndex(w?.time);

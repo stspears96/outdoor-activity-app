@@ -132,8 +132,8 @@ export async function GET(req: Request) {
   const nowMs = Date.now();
 
   const [hrrrData, namData, ecmwfData] = await Promise.all([
-    fetchModel(latParam, lonParam, "hrrr_conus"),
-    fetchModel(latParam, lonParam, "nam_conus"),
+    fetchModel(latParam, lonParam, "ncep_hrrr_conus"),
+    fetchModel(latParam, lonParam, "ncep_nam_conus"),
     fetchModel(latParam, lonParam, "ecmwf_ifs"),
   ]);
 

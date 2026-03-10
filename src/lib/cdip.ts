@@ -74,6 +74,7 @@ const CACHE_MS = 10 * 60 * 1000; // 10 minutes
 // Raw-rows cache for time-based lookups (fetchCdipAtTime)
 type RawRow = Record<string, string>;
 const cdipRawCache = new Map<string, { at: number; rows: RawRow[] }>();
+const cdipForecastCache = new Map<string, { at: number; rows: RawRow[] }>();
 
 async function fetchCdipQCRows(transect: string): Promise<RawRow[]> {
   const now = Date.now();
@@ -108,9 +109,40 @@ async function fetchCdipQCRows(transect: string): Promise<RawRow[]> {
   }
 }
 
+async function fetchCdipForecastRows(transect: string): Promise<RawRow[]> {
+  const now = Date.now();
+  const cached = cdipForecastCache.get(transect);
+  if (cached && now - cached.at < CACHE_MS) return cached.rows;
+
+  const base =
+    `https://thredds.cdip.ucsd.edu/thredds/ncss/point/cdip/model/MOP_alongshore/${transect}_forecast.nc`;
+  const url = `${base}?var=waveHs&var=waveTp&var=waveTa&var=waveDm&var=waveDp&time=all&accept=csv`;
+
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    const text = await res.text();
+    if (!res.ok) {
+      cdipForecastCache.set(transect, { at: now, rows: [] });
+      return [];
+    }
+    const { rows } = parseCsvSimple(text);
+    cdipForecastCache.set(transect, { at: now, rows: rows });
+    return rows;
+  } catch {
+    cdipForecastCache.set(transect, { at: now, rows: [] });
+    return [];
+  }
+}
+
 export async function fetchCdipAtTime(transect: string, targetMs: number): Promise<CdipLatest> {
-  const rows = await fetchCdipQCRows(transect);
-  if (!rows.length) {
+  // Fetch nowcast and forecast in parallel; pick whichever row is closest in time.
+  const [nowcastRows, forecastRows] = await Promise.all([
+    fetchCdipQCRows(transect),
+    fetchCdipForecastRows(transect),
+  ]);
+
+  const allRows = [...nowcastRows, ...forecastRows];
+  if (!allRows.length) {
     return { ok: false, transect, note: "No QC-good records found" };
   }
 
@@ -118,7 +150,7 @@ export async function fetchCdipAtTime(transect: string, targetMs: number): Promi
   let best: RawRow | null = null;
   let bestDelta = Infinity;
 
-  for (const r of rows) {
+  for (const r of allRows) {
     const t = Date.parse(r.time ?? "");
     if (!Number.isFinite(t)) continue;
     const delta = Math.abs(t - targetMs);
